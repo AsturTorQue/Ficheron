@@ -1611,6 +1611,7 @@ static TABLE: &[[&str; 4]] = &[
     ["Lado a lado", "Side by side", "Lado a lado", "Côte à côte"],
     ["Unificado", "Unified", "Unificado", "Unifié"],
     ["Mapa de diferencias: haz clic para saltar", "Difference map: click to jump", "Mapa de diferenças: clique para saltar", "Carte des différences : cliquez pour sauter"],
+    ["Desplazar el texto de los dos lados (Mayús + rueda del ratón)", "Scroll the text of both sides (Shift + mouse wheel)", "Deslocar o texto dos dois lados (Shift + roda do rato)", "Faire défiler le texte des deux côtés (Maj + molette)"],
     ["Duplicar pestaña", "Duplicate tab", "Duplicar separador", "Dupliquer l'onglet"],
     ["… (solo se muestra el principio)", "… (only the beginning is shown)", "… (só se mostra o início)", "… (seul le début est affiché)"],
     ["… y {} más", "… and {} more", "… e mais {}", "… et {} de plus"],

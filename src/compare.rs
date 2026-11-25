@@ -56,6 +56,8 @@ struct TextResult {
     urows: Vec<URow>,
     ublocks: Vec<usize>,
     names: (String, String),
+    /// Characters in the longest line: sets how wide each side must be to show it whole.
+    max_chars: usize,
     /// Row index where each block of changes starts.
     blocks: Vec<usize>,
     added: usize,
@@ -186,7 +188,8 @@ fn diff_text(a: &str, b: &str, o: Options) -> TextResult {
         }
         in_block = change;
     }
-    TextResult { rows, urows, ublocks, names: (String::new(), String::new()), blocks, added, removed, same }
+    let max_chars = la.iter().chain(lb.iter()).map(|l| l.chars().count()).max().unwrap_or(0).min(600);
+    TextResult { rows, urows, ublocks, names: (String::new(), String::new()), max_chars, blocks, added, removed, same }
 }
 
 fn fold(full: Vec<Row>) -> Vec<Row> {
@@ -315,6 +318,7 @@ pub struct Comparer {
     scroll_to: Option<f32>,
     /// Where the list was scrolled to last frame, in pixels.
     offset: f32,
+    offset_x: f32,
     viewport_h: f32,
     base: PathBuf,
 }
@@ -334,6 +338,7 @@ impl Comparer {
             rx: None,
             scroll_to: None,
             offset: 0.0,
+            offset_x: 0.0,
             viewport_h: 400.0,
             base,
         };
@@ -347,7 +352,8 @@ impl Comparer {
     /// Compares two small files at once, for trying the tool (`--compare`).
     pub fn demo(&mut self, dir: &Path) {
         let (a, b) = (dir.join("comparar_a.txt"), dir.join("comparar_b.txt"));
-        let sample: String = (1..=60).map(|i| format!("línea {i} del documento\n")).collect();
+        // Line 20 is very long, to try the sideways scroll.
+        let sample: String = (1..=60).map(|i| if i == 20 { format!("línea 20, muy larga: {}\n", "texto de relleno ".repeat(14)) } else { format!("línea {i} del documento\n") }).collect();
         let _ = fs::write(&a, &sample);
         let _ = fs::write(&b, sample.replace("línea 5 del", "línea 5 de este").replace("línea 31 del documento\n", "").replace("línea 48 del documento\n", "línea 48 del documento\nuna línea nueva\n"));
         self.a = a.to_string_lossy().to_string();
@@ -547,29 +553,36 @@ impl Comparer {
         // A window inside the main one grows with its content, so give it a ceiling there.
         let full_w = if ctx.embed_viewports() { ui.available_width().min(1040.0) } else { ui.available_width() };
         let list_w = full_w - mini_w - 6.0;
-        let half = (list_w / 2.0).max(260.0);
+        // Both sides stay on screen: a line longer than a side is shown by scrolling the text of
+        // both sides together (slider under the list, or Shift + mouse wheel).
+        let need = 70.0 + t.max_chars as f32 * 7.9;
+        let content_w = list_w - 14.0;
+        let half = content_w / 2.0;
+        let pane_w = if self.unified { content_w } else { half };
+        let max_hx = (need - pane_w).max(0.0);
+        self.offset_x = self.offset_x.clamp(0.0, max_hx);
+        let hx = self.offset_x;
+        let slider_h = if max_hx > 0.0 { 22.0 } else { 0.0 };
         if !self.unified {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                for (k, (name, tint)) in [(&t.names.0, Color32::from_rgb(210, 70, 60)), (&t.names.1, Color32::from_rgb(50, 160, 90))].into_iter().enumerate() {
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(half, 20.0), egui::Sense::hover());
-                    ui.painter().rect_filled(rect, 0.0, theme::p().hover);
-                    ui.painter().text(rect.left_center() + egui::vec2(8.0, 0.0), egui::Align2::LEFT_CENTER, format!("{}  {}", if k == 0 { "A" } else { "B" }, name), FontId::proportional(12.5), tint);
-                }
-            });
+            let (nrect, _) = ui.allocate_exact_size(egui::vec2(list_w, 20.0), egui::Sense::hover());
+            let painter = ui.painter_at(nrect);
+            painter.rect_filled(nrect, 0.0, theme::p().hover);
+            for (k, (name, tint)) in [(&t.names.0, Color32::from_rgb(210, 70, 60)), (&t.names.1, Color32::from_rgb(50, 160, 90))].into_iter().enumerate() {
+                painter.text(egui::pos2(nrect.left() + k as f32 * half + 8.0, nrect.center().y), egui::Align2::LEFT_CENTER, format!("{}  {}", if k == 0 { "A" } else { "B" }, name), FontId::proportional(12.5), tint);
+            }
         }
-        let mut area = egui::ScrollArea::vertical().id_salt("compare_rows").max_height(area_h - 22.0).auto_shrink([false, false]);
+        let mut area = egui::ScrollArea::vertical().id_salt("compare_rows").max_height(area_h - 22.0 - slider_h).auto_shrink([false, false]);
         if let Some(off) = self.scroll_to.take() {
             area = area.vertical_scroll_offset(off);
         }
         let mut out = None;
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            ui.allocate_ui_with_layout(egui::vec2(list_w, area_h - 22.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
+            let list = ui.allocate_ui_with_layout(egui::vec2(list_w, area_h - 22.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 out = Some(area.show_rows(ui, ROW_H, total_rows, |ui, range| {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     for i in range {
-                        let (rect, resp) = ui.allocate_exact_size(egui::vec2(list_w - 12.0, ROW_H), egui::Sense::hover());
+                        let (rect, resp) = ui.allocate_exact_size(egui::vec2(content_w, ROW_H), egui::Sense::hover());
                         let line = |ui: &mut egui::Ui, area: egui::Rect, no: Option<usize>, text: &str, ranges: &[(usize, usize)], bg: Option<Color32>, mark: Color32, sign: &str| {
                             if let Some(bg) = bg {
                                 ui.painter().rect_filled(area, 0.0, bg);
@@ -580,8 +593,11 @@ impl Comparer {
                             if !sign.is_empty() {
                                 ui.painter().text(egui::pos2(area.left() + 54.0, area.center().y), egui::Align2::CENTER_CENTER, sign, FontId::monospace(13.0), theme::p().text);
                             }
-                            let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(egui::pos2(area.left() + 66.0, area.top()), area.right_bottom())).layout(egui::Layout::left_to_right(egui::Align::Center)));
-                            inner.add(egui::Label::new(highlighted(text, ranges, font.clone(), theme::p().text, theme::p().text, mark)).truncate());
+                            // The text slides with the sideways scroll under a fixed gutter.
+                            let clip = egui::Rect::from_min_max(egui::pos2(area.left() + 66.0, area.top()), area.right_bottom());
+                            let galley = ui.fonts(|f| f.layout_job(highlighted(text, ranges, font.clone(), theme::p().text, theme::p().text, mark)));
+                            let pos = egui::pos2(clip.left() - hx, area.center().y - galley.size().y / 2.0);
+                            ui.painter_at(clip).galley(pos, galley, theme::p().text);
                         };
                         let mut long: Option<String> = None;
                         if self.unified {
@@ -634,7 +650,15 @@ impl Comparer {
                         }
                     }
                 }));
+                if max_hx > 0.0 {
+                    ui.spacing_mut().slider_width = (list_w - 20.0).max(100.0);
+                    ui.add(egui::Slider::new(&mut self.offset_x, 0.0..=max_hx).show_value(false)).on_hover_text(tr("Desplazar el texto de los dos lados (Mayús + rueda del ratón)"));
+                }
             });
+            if list.response.hovered() && max_hx > 0.0 {
+                let dx = ui.input(|i| i.smooth_scroll_delta.x);
+                self.offset_x = (self.offset_x - dx).clamp(0.0, max_hx);
+            }
             // Overview strip: where the differences are in the whole file; click or drag to jump.
             let (mrect, mresp) = ui.allocate_exact_size(egui::vec2(mini_w, area_h - 22.0), egui::Sense::click_and_drag());
             ui.painter().rect_filled(mrect, 3.0, theme::p().hover);
