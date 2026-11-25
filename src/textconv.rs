@@ -587,17 +587,17 @@ impl TextConv {
             if ui.add_enabled(!sel.is_empty(), egui::Button::new(trf!("➕ Añadir seleccionados ({})", sel.len()))).clicked() {
                 self.add(sel);
             }
-            if ui.button(tr("📂 Elegir archivos…")).clicked() {
+            if ui.button(tr("📂 Examinar…")).clicked() {
                 self.picker = Some(Picker::new(self.items.last().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_else(|| cwd.to_path_buf())));
             }
             if ui.add_enabled(!self.items.is_empty(), egui::Button::new(tr("🧹 Vaciar lista"))).clicked() {
                 self.items.clear();
             }
             ui.checkbox(&mut self.recursive, tr("Incluir subcarpetas"));
-            ui.checkbox(&mut self.name_regex, tr("Expresiones regulares")).on_hover_text(tr("El filtro de nombres se lee como expresión regular (sin distinguir mayúsculas), p. ej. \\.(txt|md)$"));
+            ui.checkbox(&mut self.name_regex, tr("Expresión regular")).on_hover_text(tr("El filtro de nombres se lee como expresión regular (sin distinguir mayúsculas), p. ej. \\.(txt|md)$"));
         });
         ui.horizontal(|ui| {
-            ui.add_sized([150.0, 18.0], egui::Label::new(tr("De las carpetas, solo")));
+            crate::ui_kit::label(ui, tr("De las carpetas, solo"));
             ui.add(egui::TextEdit::singleline(&mut self.include).desired_width(520.0)).on_hover_text(tr("Patrones de nombre separados por «;». Los archivos que añadas uno a uno se usan siempre."));
         });
     }
@@ -615,21 +615,21 @@ impl TextConv {
     fn options_ui(&mut self, ui: &mut egui::Ui, cwd: &Path, selection: &[PathBuf]) {
         ui.label(RichText::new(tr("QUÉ CAMBIAR")).small().strong().color(theme::p().sub));
         ui.horizontal_wrapped(|ui| {
-            ui.add_sized([150.0, 18.0], egui::Label::new(tr("Los archivos están en")));
+            crate::ui_kit::label(ui, tr("Los archivos están en"));
             Self::enc_combo(ui, "tc_from", &mut self.from, "Detectar automáticamente");
-            ui.add_sized([60.0, 18.0], egui::Label::new(tr("Pasar a")));
+            crate::ui_kit::label(ui, tr("Pasar a"));
             Self::enc_combo(ui, "tc_to", &mut self.to, "No cambiar la codificación");
         });
         ui.horizontal_wrapped(|ui| {
-            ui.add_sized([150.0, 18.0], egui::Label::new(tr("Saltos de línea")));
+            crate::ui_kit::label(ui, tr("Saltos de línea"));
             for (k, l) in EOLS.iter().enumerate() {
-                ui.radio_value(&mut self.eol, k as u8, tr(l));
+                ui.selectable_value(&mut self.eol, k as u8, tr(l));
             }
         });
         ui.horizontal_wrapped(|ui| {
-            ui.add_sized([150.0, 18.0], egui::Label::new(tr("Tabuladores")));
+            crate::ui_kit::label(ui, tr("Tabuladores"));
             for (k, l) in TABS.iter().enumerate() {
-                ui.radio_value(&mut self.tabs, k as u8, tr(l));
+                ui.selectable_value(&mut self.tabs, k as u8, tr(l));
             }
             if self.tabs != 0 {
                 ui.label(tr("ancho"));
@@ -637,25 +637,25 @@ impl TextConv {
             }
         });
         ui.horizontal_wrapped(|ui| {
-            ui.add_sized([150.0, 18.0], egui::Label::new(tr("Final del archivo")));
+            crate::ui_kit::label(ui, tr("Final del archivo"));
             for (k, l) in FINAL.iter().enumerate() {
-                ui.radio_value(&mut self.final_nl, k as u8, tr(l));
+                ui.selectable_value(&mut self.final_nl, k as u8, tr(l));
             }
         });
         ui.horizontal_wrapped(|ui| {
-            ui.add_sized([150.0, 18.0], egui::Label::new(tr("Limpieza")));
+            crate::ui_kit::label(ui, tr("Limpieza"));
             ui.checkbox(&mut self.trim, tr("Quitar espacios al final de cada línea"));
             ui.label(tr("Líneas vacías seguidas, como mucho"));
             ui.add(egui::DragValue::new(&mut self.blank_max).range(0..=20)).on_hover_text(tr("0 = no tocarlas"));
         });
         ui.horizontal_wrapped(|ui| {
-            ui.add_sized([150.0, 18.0], egui::Label::new(tr("Guardar")));
-            ui.radio_value(&mut self.dest_other, false, tr("En los mismos archivos"));
-            ui.radio_value(&mut self.dest_other, true, tr("En otra carpeta"));
+            crate::ui_kit::label(ui, tr("Guardar"));
+            ui.selectable_value(&mut self.dest_other, false, tr("En los mismos archivos"));
+            ui.selectable_value(&mut self.dest_other, true, tr("En otra carpeta"));
             if self.dest_other {
                 self.dest.ui(ui, cwd, selection);
                 for (k, l) in CONFLICTS.iter().enumerate() {
-                    ui.radio_value(&mut self.conflict, k as u8, tr(l));
+                    ui.selectable_value(&mut self.conflict, k as u8, tr(l));
                 }
             } else {
                 ui.checkbox(&mut self.backup, tr("Guardar una copia .bak del original")).on_hover_text(tr("Por si algo no sale como esperabas."));

@@ -1128,7 +1128,7 @@ impl Syncer {
         ui.label(RichText::new(tr("MODO")).small().strong().color(theme::p().sub));
         ui.horizontal_wrapped(|ui| {
             for (k, (name, desc)) in MODES.iter().enumerate() {
-                ui.radio_value(&mut self.o.mode, k as u8, tr(name)).on_hover_text(tr(desc));
+                ui.selectable_value(&mut self.o.mode, k as u8, tr(name)).on_hover_text(tr(desc));
             }
         });
         ui.label(RichText::new(tr(MODES[self.o.mode as usize].1)).small().color(theme::p().sub));
@@ -1142,7 +1142,7 @@ impl Syncer {
                     ui.set_width(380.0);
                     ui.label(RichText::new(tr("Considerar distintos por")).small().strong().color(theme::p().sub));
                     for (k, l) in COMPARE.iter().enumerate() {
-                        ui.radio_value(&mut self.o.compare, k as u8, tr(l));
+                        ui.selectable_value(&mut self.o.compare, k as u8, tr(l));
                     }
                     ui.horizontal(|ui| {
                         ui.label(tr("Tolerancia de fecha"));
@@ -1157,7 +1157,7 @@ impl Syncer {
                     if matches!(mode, 0 | 1 | 4) {
                         ui.label(RichText::new(tr("Si el archivo ya existe y es distinto")).small().strong().color(theme::p().sub));
                         for (k, l) in OVERWRITE.iter().enumerate() {
-                            ui.radio_value(&mut self.o.overwrite, k as u8, tr(l));
+                            ui.selectable_value(&mut self.o.overwrite, k as u8, tr(l));
                         }
                     }
                     if matches!(mode, 0 | 1 | 3 | 4) {
@@ -1170,7 +1170,7 @@ impl Syncer {
                     if matches!(mode, 0 | 4) {
                         ui.label(RichText::new(tr(if mode == 4 { "Al quitar del origen" } else { "Al borrar del destino" })).small().strong().color(theme::p().sub));
                         for (k, l) in DELETE.iter().enumerate() {
-                            ui.radio_value(&mut self.o.delete_method, k as u8, tr(l));
+                            ui.selectable_value(&mut self.o.delete_method, k as u8, tr(l));
                         }
                     }
                     if mode == 0 {
@@ -1185,16 +1185,16 @@ impl Syncer {
                     ui.set_width(400.0);
                     let hint_inc = if self.o.pat_regex { "\\.(jpe?g|png)$" } else { "*.jpg; *.png" };
                     ui.horizontal(|ui| {
-                        ui.add_sized([100.0, 18.0], egui::Label::new(tr("Incluir")));
+                        crate::ui_kit::label(ui, tr("Incluir"));
                         ui.add(egui::TextEdit::singleline(&mut self.o.include).hint_text(hint_inc).desired_width(260.0));
                     });
                     ui.horizontal(|ui| {
-                        ui.add_sized([100.0, 18.0], egui::Label::new(tr("Excluir")));
+                        crate::ui_kit::label(ui, tr("Excluir"));
                         ui.add(egui::TextEdit::singleline(&mut self.o.exclude).hint_text(if self.o.pat_regex { "\\.tmp$" } else { "*.tmp; thumbs.db" }).desired_width(260.0));
                     });
                     ui.checkbox(&mut self.o.pat_regex, tr("Los filtros son expresiones regulares"));
                     ui.horizontal(|ui| {
-                        ui.add_sized([100.0, 18.0], egui::Label::new(tr("Saltar carpetas")));
+                        crate::ui_kit::label(ui, tr("Saltar carpetas"));
                         ui.add(egui::TextEdit::singleline(&mut self.o.exclude_dirs).desired_width(260.0)).on_hover_text(tr("Nombres de carpetas que no se recorren, con comodines, separados por «;»"));
                     });
                     ui.label(RichText::new(tr("Lo que un filtro deja fuera no se copia ni se borra en ninguna de las dos carpetas.")).small().color(theme::p().muted));
@@ -1204,7 +1204,7 @@ impl Syncer {
                     size_field(ui, tr("Tamaño mínimo"), &mut self.o.min_text, tr("sin límite"));
                     size_field(ui, tr("Tamaño máximo"), &mut self.o.max_text, tr("sin límite"));
                     ui.horizontal(|ui| {
-                        ui.add_sized([100.0, 18.0], egui::Label::new(tr("Modificados en")));
+                        crate::ui_kit::label(ui, tr("Modificados en"));
                         ui.add(egui::DragValue::new(&mut self.o.last_days).range(0..=36500).suffix(tr(" días"))).on_hover_text(tr("Solo archivos modificados en los últimos días indicados (0 = todos)"));
                     });
                     ui.checkbox(&mut self.o.skip_hidden, tr("Saltar archivos y carpetas ocultos"));

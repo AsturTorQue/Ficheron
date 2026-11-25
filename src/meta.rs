@@ -739,8 +739,8 @@ impl MetaTool {
     }
 
     fn clean_ui(&mut self, ui: &mut egui::Ui) {
-        ui.radio_value(&mut self.gps_only, false, tr("Quitar todo: EXIF, XMP, IPTC, comentarios (y las etiquetas de la música)"));
-        ui.radio_value(&mut self.gps_only, true, tr("Quitar solo la ubicación GPS de las fotos"));
+        ui.selectable_value(&mut self.gps_only, false, tr("Quitar todo: EXIF, XMP, IPTC, comentarios (y las etiquetas de la música)"));
+        ui.selectable_value(&mut self.gps_only, true, tr("Quitar solo la ubicación GPS de las fotos"));
         ui.add_enabled(!self.gps_only, egui::Checkbox::new(&mut self.keep_orientation, tr("Conservar la orientación de la foto"))).on_hover_text(tr("Sin ella, algunas fotos de móvil se verían giradas."));
         ui.horizontal(|ui| {
             ui.checkbox(&mut self.backup, tr("Guardar una copia .bak de cada archivo"));

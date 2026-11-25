@@ -621,7 +621,7 @@ impl Purge {
                 let hint = if self.regex { "\\.(tmp|bak)$\n^~\\$" } else { "*.tmp; *.bak; *~" };
                 ui.add(egui::TextEdit::multiline(&mut self.patterns).hint_text(hint).font(egui::TextStyle::Monospace).desired_rows(3).desired_width(f32::INFINITY));
                 ui.horizontal(|ui| {
-                    ui.add_sized([70.0, 18.0], egui::Label::new(tr("Proteger")));
+                    crate::ui_kit::label(ui, tr("Proteger"));
                     ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text(tr("patrones que nunca se borran, p. ej. importante*")).desired_width(430.0))
                         .on_hover_text(tr("Lo que coincida con estos patrones no se borra; si es una carpeta, tampoco nada de lo que hay dentro."));
                 });
@@ -629,8 +629,8 @@ impl Purge {
             });
             ui.add_space(12.0);
             ui.vertical(|ui| {
-                ui.radio_value(&mut self.regex, false, tr("Comodines * ?"));
-                ui.radio_value(&mut self.regex, true, tr("Expresión regular"));
+                ui.selectable_value(&mut self.regex, false, tr("Comodines * ?"));
+                ui.selectable_value(&mut self.regex, true, tr("Expresión regular"));
                 ui.checkbox(&mut self.case, tr("Distinguir mayúsculas"));
                 ui.checkbox(&mut self.on_path, tr("Comparar con la ruta, no solo con el nombre"))
                     .on_hover_text(tr("Con la ruta puedes escribir cosas como «cache/*.dat» o «**/temp/*». La ruta se cuenta desde la carpeta de búsqueda."));
@@ -652,11 +652,11 @@ impl Purge {
                     size_field(ui, tr("Tamaño mínimo"), &mut self.min_text, tr("sin límite"));
                     size_field(ui, tr("Tamaño máximo"), &mut self.max_text, tr("sin límite"));
                     ui.horizontal(|ui| {
-                        ui.add_sized([100.0, 18.0], egui::Label::new(tr("Más antiguos de")));
+                        crate::ui_kit::label(ui, tr("Más antiguos de"));
                         ui.add(egui::DragValue::new(&mut self.older_days).range(0..=36500).suffix(tr(" días"))).on_hover_text(tr("Solo lo modificado hace al menos estos días (0 = sin filtro)"));
                     });
                     ui.horizontal(|ui| {
-                        ui.add_sized([100.0, 18.0], egui::Label::new(tr("Modificados hace")));
+                        crate::ui_kit::label(ui, tr("Modificados hace"));
                         ui.add(egui::DragValue::new(&mut self.newer_days).range(0..=36500).suffix(tr(" días"))).on_hover_text(tr("Solo lo modificado en los últimos días indicados (0 = sin filtro)"));
                     });
                 });
@@ -670,7 +670,7 @@ impl Purge {
                         });
                     });
                     ui.horizontal(|ui| {
-                        ui.add_sized([100.0, 18.0], egui::Label::new(tr("Saltar carpetas")));
+                        crate::ui_kit::label(ui, tr("Saltar carpetas"));
                         ui.add(egui::TextEdit::singleline(&mut self.skip_dirs).desired_width(200.0)).on_hover_text(tr("Nombres de carpetas que no se recorren, con comodines, separados por «;»"));
                     });
                     ui.checkbox(&mut self.skip_hidden, tr("Saltar archivos y carpetas ocultos"));
@@ -787,7 +787,7 @@ impl Purge {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(tr("Al borrar")).small().strong().color(theme::p().sub));
                 for (k, l) in METHODS.iter().enumerate() {
-                    ui.radio_value(&mut self.method, k as u8, tr(l));
+                    ui.selectable_value(&mut self.method, k as u8, tr(l));
                 }
             });
             ui.horizontal_wrapped(|ui| {

@@ -284,13 +284,13 @@ impl EmptyDirs {
                 ui.checkbox(&mut self.recursive, tr("Incluir subcarpetas")).on_hover_text(tr("Si no, solo se miran las carpetas que están directamente dentro de las elegidas."));
                 ui.checkbox(&mut self.include_root, tr("Incluir también la carpeta elegida si queda vacía"));
                 ui.checkbox(&mut self.hidden_is_junk, tr("Los archivos ocultos cuentan como basura"));
-                ui.checkbox(&mut self.regex, tr("Expresiones regulares")).on_hover_text(tr("Los patrones de «Cuentan como vacío» y «Carpetas protegidas» se leen como expresiones regulares sobre el nombre (sin distinguir mayúsculas)."));
+                ui.checkbox(&mut self.regex, tr("Expresión regular")).on_hover_text(tr("Los patrones de «Cuentan como vacío» y «Carpetas protegidas» se leen como expresiones regulares sobre el nombre (sin distinguir mayúsculas)."));
             });
             egui::Grid::new("emptydirs_grid").num_columns(2).spacing([10.0, 4.0]).show(ui, |ui| {
-                ui.label(tr("Cuentan como vacío"));
+                crate::ui_kit::label(ui, tr("Cuentan como vacío"));
                 ui.add(egui::TextEdit::singleline(&mut self.junk).desired_width(f32::INFINITY)).on_hover_text(tr("Una carpeta que solo tiene archivos así se considera vacía y se elimina con ellos. Patrones separados por «;»."));
                 ui.end_row();
-                ui.label(tr("Carpetas protegidas"));
+                crate::ui_kit::label(ui, tr("Carpetas protegidas"));
                 ui.add(egui::TextEdit::singleline(&mut self.protect).desired_width(f32::INFINITY)).on_hover_text(tr("Estas carpetas nunca se tocan, y las que las contienen tampoco quedan vacías."));
                 ui.end_row();
             });

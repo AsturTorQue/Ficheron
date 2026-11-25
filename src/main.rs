@@ -31,6 +31,7 @@ mod settings;
 mod sync;
 mod theme;
 mod tools;
+mod ui_kit;
 
 use eframe::egui::{self, Align2, Color32, FontId, Key, Modifiers, RichText, Sense, Stroke, Vec2};
 use fsops::{human_size, Entry};

@@ -302,13 +302,13 @@ impl Replacer {
             self.src.ui(ui, selection, cwd, tr("ARCHIVOS DE TEXTO"));
             ui.separator();
             egui::Grid::new("replace_fields").num_columns(2).spacing([10.0, 4.0]).show(ui, |ui| {
-                ui.label(tr("Buscar"));
+                crate::ui_kit::label(ui, tr("Buscar"));
                 let r = ui.add(egui::TextEdit::singleline(&mut self.o.find).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     self.start(false);
                 }
                 ui.end_row();
-                ui.label(tr("Reemplazar por"));
+                crate::ui_kit::label(ui, tr("Reemplazar por"));
                 ui.add(egui::TextEdit::singleline(&mut self.o.replace).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace)).on_hover_text(tr("En modo expresión regular puedes usar $1, $2… para los grupos."));
                 ui.end_row();
             });

@@ -629,7 +629,7 @@ impl Crypter {
             if ui.add_enabled(!sel.is_empty(), egui::Button::new(trf!("➕ Añadir seleccionados ({})", sel.len()))).clicked() {
                 self.add(sel);
             }
-            if ui.button(tr("📂 Elegir archivos…")).clicked() {
+            if ui.button(tr("📂 Examinar…")).clicked() {
                 self.picker = Some(Picker::new(self.items.last().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_else(|| cwd.to_path_buf())));
             }
             if ui.add_enabled(!self.items.is_empty(), egui::Button::new(tr("🧹 Vaciar lista"))).clicked() {
@@ -643,12 +643,12 @@ impl Crypter {
         ui.label(RichText::new(tr("QUÉ HACER")).small().strong().color(theme::p().sub));
         ui.horizontal_wrapped(|ui| {
             for (k, (name, desc)) in MODES.iter().enumerate() {
-                ui.radio_value(&mut self.mode, k as u8, tr(name)).on_hover_text(tr(desc));
+                ui.selectable_value(&mut self.mode, k as u8, tr(name)).on_hover_text(tr(desc));
             }
         });
         ui.label(RichText::new(tr(MODES[self.mode as usize].1)).small().color(theme::p().sub));
         ui.horizontal(|ui| {
-            ui.add_sized([100.0, 18.0], egui::Label::new(tr("Contraseña")));
+            crate::ui_kit::label(ui, tr("Contraseña"));
             ui.add(egui::TextEdit::singleline(&mut self.password).password(!self.show_pw).desired_width(220.0));
             if self.mode != 1 {
                 ui.add(egui::TextEdit::singleline(&mut self.password2).password(!self.show_pw).hint_text(tr("repetir")).desired_width(220.0));
@@ -657,24 +657,24 @@ impl Crypter {
         });
         ui.label(RichText::new(tr("Sin la contraseña no hay forma de recuperar los archivos: ni esta herramienta ni nadie puede. Guárdala en un lugar seguro.")).small().color(theme::p().danger));
         ui.horizontal_wrapped(|ui| {
-            ui.add_sized([100.0, 18.0], egui::Label::new(tr("Guardar en")));
-            ui.radio_value(&mut self.dest_other, false, tr("Junto al original"));
-            ui.radio_value(&mut self.dest_other, true, tr("Otra carpeta"));
+            crate::ui_kit::label(ui, tr("Guardar en"));
+            ui.selectable_value(&mut self.dest_other, false, tr("Junto al original"));
+            ui.selectable_value(&mut self.dest_other, true, tr("Otra carpeta"));
             if self.dest_other {
                 self.dest.ui(ui, cwd, selection);
             }
         });
         ui.horizontal_wrapped(|ui| {
-            ui.add_sized([100.0, 18.0], egui::Label::new(tr("Si ya existe")));
+            crate::ui_kit::label(ui, tr("Si ya existe"));
             for (k, l) in CONFLICTS.iter().enumerate() {
-                ui.radio_value(&mut self.conflict, k as u8, tr(l));
+                ui.selectable_value(&mut self.conflict, k as u8, tr(l));
             }
         });
         egui::CollapsingHeader::new(tr("⚙ Más opciones")).default_open(false).show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.add_sized([100.0, 18.0], egui::Label::new(tr("Protección")));
+                crate::ui_kit::label(ui, tr("Protección"));
                 for (k, (name, desc, _)) in STRENGTHS.iter().enumerate() {
-                    ui.radio_value(&mut self.strength, k, tr(name)).on_hover_text(tr(desc));
+                    ui.selectable_value(&mut self.strength, k, tr(name)).on_hover_text(tr(desc));
                 }
             });
             ui.label(RichText::new(tr(STRENGTHS[self.strength].1)).small().color(theme::p().muted));

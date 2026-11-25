@@ -645,7 +645,7 @@ impl Extractor {
             if ui.add_enabled(!sel.is_empty(), egui::Button::new(trf!("➕ Añadir seleccionados ({})", sel.len()))).on_hover_text(tr("Solo se añaden los archivos comprimidos que reconoce.")).clicked() {
                 self.add_items(sel);
             }
-            if ui.button(tr("📂 Elegir archivos…")).clicked() {
+            if ui.button(tr("📂 Examinar…")).clicked() {
                 self.picker = Some(Picker::new(self.items.last().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_else(|| cwd.to_path_buf())));
             }
             if ui.add_enabled(!self.items.is_empty(), egui::Button::new(tr("🧹 Vaciar lista"))).clicked() {
@@ -658,33 +658,33 @@ impl Extractor {
     fn options_ui(&mut self, ui: &mut egui::Ui, cwd: &Path, selection: &[PathBuf]) {
         ui.label(RichText::new(tr("DÓNDE Y CÓMO")).small().strong().color(theme::p().sub));
         ui.horizontal_wrapped(|ui| {
-            ui.add_sized([90.0, 18.0], egui::Label::new(tr("Extraer en")));
-            ui.radio_value(&mut self.dest_other, false, tr("Junto a cada paquete"));
-            ui.radio_value(&mut self.dest_other, true, tr("Otra carpeta"));
+            crate::ui_kit::label(ui, tr("Extraer en"));
+            ui.selectable_value(&mut self.dest_other, false, tr("Junto a cada paquete"));
+            ui.selectable_value(&mut self.dest_other, true, tr("Otra carpeta"));
             if self.dest_other {
                 self.dest.ui(ui, cwd, selection);
             }
         });
         ui.horizontal_wrapped(|ui| {
-            ui.add_sized([90.0, 18.0], egui::Label::new(tr("Carpeta")));
+            crate::ui_kit::label(ui, tr("Carpeta"));
             for (k, l) in FOLDER_MODES.iter().enumerate() {
-                ui.radio_value(&mut self.folder_mode, k as u8, tr(l));
+                ui.selectable_value(&mut self.folder_mode, k as u8, tr(l));
             }
         });
         ui.horizontal_wrapped(|ui| {
-            ui.add_sized([90.0, 18.0], egui::Label::new(tr("Si ya existe")));
+            crate::ui_kit::label(ui, tr("Si ya existe"));
             for (k, l) in CONFLICTS.iter().enumerate() {
-                ui.radio_value(&mut self.conflict, k as u8, tr(l));
+                ui.selectable_value(&mut self.conflict, k as u8, tr(l));
             }
         });
         egui::CollapsingHeader::new(tr("⚙ Más opciones")).default_open(false).show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.add_sized([100.0, 18.0], egui::Label::new(tr("Contraseña")));
+                crate::ui_kit::label(ui, tr("Contraseña"));
                 ui.add(egui::TextEdit::singleline(&mut self.password).password(!self.show_pw).hint_text(tr("solo si el paquete la pide")).desired_width(220.0));
                 ui.checkbox(&mut self.show_pw, tr("mostrar"));
             });
             ui.horizontal(|ui| {
-                ui.add_sized([100.0, 18.0], egui::Label::new(tr("Solo extraer")));
+                crate::ui_kit::label(ui, tr("Solo extraer"));
                 ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text(if self.filter_regex { "\\.(jpg|png)$" } else { "*.jpg; *.png" }).desired_width(260.0)).on_hover_text(tr("Solo los archivos cuyo nombre coincida (vacío = todo)"));
                 ui.checkbox(&mut self.filter_regex, tr("Expresión regular"));
             });

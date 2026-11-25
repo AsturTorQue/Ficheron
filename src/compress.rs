@@ -1027,7 +1027,7 @@ impl Compressor {
             if ui.add_enabled(!sel.is_empty(), egui::Button::new(trf!("➕ Añadir seleccionados ({})", sel.len()))).on_hover_text(tr("Selecciona archivos en la ventana principal (puedes cambiar de carpeta) y pulsa aquí.")).clicked() {
                 self.add_items(sel);
             }
-            if ui.button(tr("📂 Elegir archivos…")).on_hover_text(tr("Navega y marca archivos y carpetas")).clicked() {
+            if ui.button(tr("📂 Examinar…")).on_hover_text(tr("Navega y marca archivos y carpetas")).clicked() {
                 let start = self.items.last().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_else(|| cwd.to_path_buf());
                 self.picker = Some(Picker::new(start));
             }
@@ -1066,7 +1066,7 @@ impl Compressor {
         ui.label(RichText::new(tr("CUÁNTOS PAQUETES")).small().strong().color(theme::p().sub));
         ui.horizontal_wrapped(|ui| {
             for (k, (name, desc)) in MODES.iter().enumerate() {
-                ui.radio_value(&mut self.o.mode, k as u8, tr(name)).on_hover_text(tr(desc));
+                ui.selectable_value(&mut self.o.mode, k as u8, tr(name)).on_hover_text(tr(desc));
             }
         });
         ui.label(RichText::new(tr(MODES[self.o.mode as usize].1)).small().color(theme::p().sub));
@@ -1075,7 +1075,7 @@ impl Compressor {
     fn name_ui(&mut self, ui: &mut egui::Ui, cwd: &Path, selection: &[PathBuf]) {
         ui.label(RichText::new(tr("NOMBRE Y DESTINO")).small().strong().color(theme::p().sub));
         ui.horizontal(|ui| {
-            ui.add_sized([90.0, 18.0], egui::Label::new(tr("Nombre")));
+            crate::ui_kit::label(ui, tr("Nombre"));
             ui.add(egui::TextEdit::singleline(&mut self.o.name).desired_width(260.0).font(egui::TextStyle::Monospace)).on_hover_text(tr("Admite {nombre}, {fecha}, {fecha:%d-%m-%Y}, {n}, {carpeta} y {ext}"));
             for code in ["{nombre}", "{fecha}", "{n}"] {
                 if ui.small_button(code).clicked() {
@@ -1087,9 +1087,9 @@ impl Compressor {
             }
         });
         ui.horizontal_wrapped(|ui| {
-            ui.add_sized([90.0, 18.0], egui::Label::new(tr("Guardar en")));
-            ui.radio_value(&mut self.o.dest_mode, 0, tr("Junto al original"));
-            ui.radio_value(&mut self.o.dest_mode, 1, tr("Otra carpeta"));
+            crate::ui_kit::label(ui, tr("Guardar en"));
+            ui.selectable_value(&mut self.o.dest_mode, 0, tr("Junto al original"));
+            ui.selectable_value(&mut self.o.dest_mode, 1, tr("Otra carpeta"));
             if self.o.dest_mode == 1 {
                 ui.add(egui::TextEdit::singleline(&mut self.o.dest).hint_text(tr("carpeta destino")).desired_width(280.0));
                 if ui.button(tr("📂 Examinar…")).clicked() {
@@ -1102,9 +1102,9 @@ impl Compressor {
             }
         });
         ui.horizontal_wrapped(|ui| {
-            ui.add_sized([90.0, 18.0], egui::Label::new(tr("Si ya existe")));
+            crate::ui_kit::label(ui, tr("Si ya existe"));
             for (k, l) in CONFLICTS.iter().enumerate() {
-                ui.radio_value(&mut self.o.conflict, k as u8, tr(l));
+                ui.selectable_value(&mut self.o.conflict, k as u8, tr(l));
             }
         });
         let names = self.preview();
@@ -1122,7 +1122,7 @@ impl Compressor {
         egui::CollapsingHeader::new(tr("⚙ Compresión")).default_open(false).show(ui, |ui| {
             if fmt.has_level() {
                 ui.horizontal(|ui| {
-                    ui.add_sized([120.0, 18.0], egui::Label::new(tr("Nivel de compresión")));
+                    crate::ui_kit::label(ui, tr("Nivel de compresión"));
                     ui.add(egui::Slider::new(&mut self.o.level, 0..=9).show_value(true));
                     let hint = match self.o.level {
                         0 => "sin comprimir",
@@ -1136,14 +1136,14 @@ impl Compressor {
             if fmt == Fmt::Zip {
                 ui.label(RichText::new(tr("Método")).small().strong().color(theme::p().sub));
                 for (k, l) in ZIP_METHODS.iter().enumerate() {
-                    ui.radio_value(&mut self.o.zip_method, k as u8, tr(l));
+                    ui.selectable_value(&mut self.o.zip_method, k as u8, tr(l));
                 }
                 ui.checkbox(&mut self.o.store_compressed, tr("No recomprimir lo que ya está comprimido (jpg, mp4, zip, pdf…)"))
                     .on_hover_text(tr("Esos archivos se guardan tal cual: va más rápido y casi no cambia el tamaño."));
             }
             if self.o.mode != 0 {
                 ui.horizontal(|ui| {
-                    ui.add_sized([120.0, 18.0], egui::Label::new(tr("Paquetes a la vez")));
+                    crate::ui_kit::label(ui, tr("Paquetes a la vez"));
                     ui.add(egui::DragValue::new(&mut self.o.threads).range(1..=16));
                     ui.label(RichText::new(tr("(en paralelo)")).small().color(theme::p().sub));
                 });
@@ -1154,11 +1154,11 @@ impl Compressor {
         egui::CollapsingHeader::new(tr("🔎 Qué incluir")).default_open(false).show(ui, |ui| {
             let hint_inc = if self.o.pat_regex { "\\.(jpe?g|png)$" } else { "*.jpg; *.png" };
             ui.horizontal(|ui| {
-                ui.add_sized([100.0, 18.0], egui::Label::new(tr("Solo")));
+                crate::ui_kit::label(ui, tr("Solo"));
                 ui.add(egui::TextEdit::singleline(&mut self.o.include).hint_text(hint_inc).desired_width(300.0)).on_hover_text(tr("Dentro de las carpetas, incluye solo los archivos que coincidan (vacío = todos)"));
             });
             ui.horizontal(|ui| {
-                ui.add_sized([100.0, 18.0], egui::Label::new(tr("Excluir")));
+                crate::ui_kit::label(ui, tr("Excluir"));
                 ui.add(egui::TextEdit::singleline(&mut self.o.exclude).hint_text(if self.o.pat_regex { "^\\.git$" } else { "*.tmp; node_modules; .git" }).desired_width(300.0)).on_hover_text(tr("Archivos y carpetas (con todo lo que contienen) que no se incluyen"));
             });
             ui.checkbox(&mut self.o.pat_regex, tr("Los filtros son expresiones regulares"));
@@ -1169,7 +1169,7 @@ impl Compressor {
         egui::CollapsingHeader::new(tr("🔒 Seguridad y extras")).default_open(false).show(ui, |ui| {
             if fmt.password() {
                 ui.horizontal(|ui| {
-                    ui.add_sized([100.0, 18.0], egui::Label::new(tr("Contraseña")));
+                    crate::ui_kit::label(ui, tr("Contraseña"));
                     ui.add(egui::TextEdit::singleline(&mut self.o.password).password(!self.o.show_pw).desired_width(200.0));
                     ui.add(egui::TextEdit::singleline(&mut self.o.password2).password(!self.o.show_pw).hint_text(tr("repetir")).desired_width(200.0));
                     ui.checkbox(&mut self.o.show_pw, tr("mostrar"));
@@ -1182,7 +1182,7 @@ impl Compressor {
             }
             if fmt == Fmt::Zip {
                 ui.horizontal(|ui| {
-                    ui.add_sized([100.0, 18.0], egui::Label::new(tr("Comentario")));
+                    crate::ui_kit::label(ui, tr("Comentario"));
                     ui.add(egui::TextEdit::singleline(&mut self.o.comment).desired_width(400.0));
                 });
             }

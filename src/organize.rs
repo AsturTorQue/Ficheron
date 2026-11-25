@@ -595,14 +595,14 @@ impl Organizer {
         ui.horizontal_wrapped(|ui| {
             for k in ORDER {
                 let (name, desc) = MODES[k as usize];
-                ui.radio_value(&mut self.mode, k, tr(name)).on_hover_text(tr(desc));
+                ui.selectable_value(&mut self.mode, k, tr(name)).on_hover_text(tr(desc));
             }
         });
         ui.label(RichText::new(tr(MODES[self.mode as usize].1)).small().color(theme::p().sub));
         match self.mode {
             2 => {
                 ui.horizontal_wrapped(|ui| {
-                    ui.add_sized([100.0, 18.0], egui::Label::new(tr("Plantilla")));
+                    crate::ui_kit::label(ui, tr("Plantilla"));
                     ui.add(egui::TextEdit::singleline(&mut self.date_tpl).desired_width(240.0).font(egui::TextStyle::Monospace)).on_hover_text(tr("Admite {año}, {mes}, {mes_nombre}, {dia}, {semana} y {trimestre}; «/» crea subcarpetas"));
                     for t in ["{año}", "{año}/{mes}", "{año}/{mes_nombre}", "{año}-{mes}-{dia}"] {
                         if ui.small_button(t).clicked() {
@@ -611,17 +611,17 @@ impl Organizer {
                     }
                 });
                 ui.horizontal_wrapped(|ui| {
-                    ui.add_sized([100.0, 18.0], egui::Label::new(tr("Usar")));
+                    crate::ui_kit::label(ui, tr("Usar"));
                     for (k, l) in DATE_SRC.iter().enumerate() {
-                        ui.radio_value(&mut self.date_src, k as u8, tr(l));
+                        ui.selectable_value(&mut self.date_src, k as u8, tr(l));
                     }
                 });
             }
             6 | 7 => {
                 ui.horizontal_wrapped(|ui| {
-                    ui.add_sized([100.0, 18.0], egui::Label::new(tr("Usar")));
+                    crate::ui_kit::label(ui, tr("Usar"));
                     for (k, l) in DATE_SRC.iter().take(2).enumerate() {
-                        ui.radio_value(&mut self.date_src, k as u8, tr(l));
+                        ui.selectable_value(&mut self.date_src, k as u8, tr(l));
                     }
                 });
             }
@@ -658,32 +658,32 @@ impl Organizer {
 
     fn options_ui(&mut self, ui: &mut egui::Ui, cwd: &Path, selection: &[PathBuf]) {
         ui.horizontal_wrapped(|ui| {
-            ui.add_sized([100.0, 18.0], egui::Label::new(tr("Crear las carpetas")));
-            ui.radio_value(&mut self.dest_other, false, tr("Dentro de cada carpeta"));
-            ui.radio_value(&mut self.dest_other, true, tr("En otra carpeta"));
+            crate::ui_kit::label(ui, tr("Crear las carpetas"));
+            ui.selectable_value(&mut self.dest_other, false, tr("Dentro de cada carpeta"));
+            ui.selectable_value(&mut self.dest_other, true, tr("En otra carpeta"));
             if self.dest_other {
                 self.dest.ui(ui, cwd, selection);
             }
         });
         ui.horizontal_wrapped(|ui| {
-            ui.add_sized([100.0, 18.0], egui::Label::new(tr("Los archivos")));
-            ui.radio_value(&mut self.copy, false, tr("Se mueven"));
-            ui.radio_value(&mut self.copy, true, tr("Se copian"));
-            ui.add_sized([90.0, 18.0], egui::Label::new(tr("Si ya existe")));
+            crate::ui_kit::label(ui, tr("Los archivos"));
+            ui.selectable_value(&mut self.copy, false, tr("Se mueven"));
+            ui.selectable_value(&mut self.copy, true, tr("Se copian"));
+            crate::ui_kit::label(ui, tr("Si ya existe"));
             for (k, l) in CONFLICTS.iter().enumerate() {
-                ui.radio_value(&mut self.conflict, k as u8, tr(l));
+                ui.selectable_value(&mut self.conflict, k as u8, tr(l));
             }
         });
         egui::CollapsingHeader::new(tr("🔎 Qué incluir")).default_open(false).show(ui, |ui| {
             ui.checkbox(&mut self.recursive, tr("Incluir los archivos de las subcarpetas")).on_hover_text(tr("Se sacan de sus subcarpetas y se reparten en las carpetas nuevas."));
             ui.checkbox(&mut self.hidden, tr("Incluir archivos ocultos"));
-            ui.checkbox(&mut self.filter_regex, tr("Expresiones regulares")).on_hover_text(tr("Los patrones de «Solo», «Excluir» y de las reglas propias se leen como expresiones regulares sobre el nombre (sin distinguir mayúsculas)."));
+            ui.checkbox(&mut self.filter_regex, tr("Expresión regular")).on_hover_text(tr("Los patrones de «Solo», «Excluir» y de las reglas propias se leen como expresiones regulares sobre el nombre (sin distinguir mayúsculas)."));
             ui.horizontal(|ui| {
-                ui.add_sized([100.0, 18.0], egui::Label::new(tr("Solo")));
+                crate::ui_kit::label(ui, tr("Solo"));
                 ui.add(egui::TextEdit::singleline(&mut self.include).hint_text(if self.filter_regex { "\\.(jpg|png)$" } else { "*.jpg; *.png" }).desired_width(260.0));
             });
             ui.horizontal(|ui| {
-                ui.add_sized([100.0, 18.0], egui::Label::new(tr("Excluir")));
+                crate::ui_kit::label(ui, tr("Excluir"));
                 ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text(if self.filter_regex { "\\.tmp$|^importante" } else { "*.tmp; importante*" }).desired_width(260.0));
             });
             ui.checkbox(&mut self.clean_empty, tr("Quitar las subcarpetas que queden vacías")).on_hover_text(tr("Solo al mover archivos."));

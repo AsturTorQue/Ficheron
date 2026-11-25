@@ -575,7 +575,7 @@ impl Dupes {
                 ui.set_width(250.0);
                 ui.label(RichText::new(tr("CRITERIO")).small().strong().color(theme::p().sub));
                 for (k, l) in MODES.iter().enumerate() {
-                    ui.radio_value(&mut self.mode, k as u8, tr(l));
+                    ui.selectable_value(&mut self.mode, k as u8, tr(l));
                 }
                 if self.mode == 1 || self.mode == 2 {
                     ui.checkbox(&mut self.name_ci, tr("Sin distinguir mayúsculas"));
@@ -595,20 +595,20 @@ impl Dupes {
                 size_field(ui, tr("Tamaño máximo"), &mut self.max_text, tr("sin límite"));
                 let hint_inc = if self.pat_regex { "\\.(jpe?g|png)$" } else { "*.jpg; *.png" };
                 ui.horizontal(|ui| {
-                    ui.add_sized([100.0, 18.0], egui::Label::new(tr("Incluir")));
+                    crate::ui_kit::label(ui, tr("Incluir"));
                     ui.add(egui::TextEdit::singleline(&mut self.include).hint_text(hint_inc).desired_width(220.0));
                 });
                 ui.horizontal(|ui| {
-                    ui.add_sized([100.0, 18.0], egui::Label::new(tr("Excluir")));
+                    crate::ui_kit::label(ui, tr("Excluir"));
                     ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text(if self.pat_regex { "\\.tmp$" } else { "*.tmp; thumbs.db" }).desired_width(220.0));
                 });
                 ui.checkbox(&mut self.pat_regex, tr("Los filtros son expresiones regulares"));
                 ui.horizontal(|ui| {
-                    ui.add_sized([100.0, 18.0], egui::Label::new(tr("Saltar carpetas")));
+                    crate::ui_kit::label(ui, tr("Saltar carpetas"));
                     ui.add(egui::TextEdit::singleline(&mut self.exclude_dirs).desired_width(220.0)).on_hover_text(tr("Nombres de carpetas que no se recorren, con comodines, separados por «;»"));
                 });
                 ui.horizontal(|ui| {
-                    ui.add_sized([100.0, 18.0], egui::Label::new(tr("Antigüedad mínima")));
+                    crate::ui_kit::label(ui, tr("Antigüedad mínima"));
                     ui.add(egui::DragValue::new(&mut self.min_age_days).range(0..=36500).suffix(tr(" días"))).on_hover_text(tr("Ignora lo modificado hace menos de estos días (0 = todo). Útil para no tocar descargas recientes."));
                 });
             });
@@ -953,7 +953,7 @@ pub fn parse_size(text: &str) -> Result<Option<u64>, String> {
 
 pub(crate) fn size_field(ui: &mut egui::Ui, label: &str, text: &mut String, hint: &str) {
     ui.horizontal(|ui| {
-        ui.add_sized([100.0, 18.0], egui::Label::new(label));
+        crate::ui_kit::label(ui, label);
         ui.add(egui::TextEdit::singleline(text).hint_text(hint).desired_width(90.0)).on_hover_text(tr("Escribe el número y la unidad: 500 KB, 1,5 MB, 2 GB…"));
         match parse_size(text) {
             Ok(Some(n)) => {

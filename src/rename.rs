@@ -934,7 +934,7 @@ impl Renamer {
                 self.items.remove(sel.unwrap());
                 self.selected = None;
             }
-            if ui.add_enabled(!self.items.is_empty(), egui::Button::new(tr("Vaciar lista"))).clicked() {
+            if ui.add_enabled(!self.items.is_empty(), egui::Button::new(tr("🧹 Vaciar lista"))).clicked() {
                 self.items.clear();
                 self.selected = None;
             }
@@ -1123,8 +1123,8 @@ impl Renamer {
             });
             ui.collapsing(tr("⚙ Opciones avanzadas"), |ui| {
                 ui.label(tr("Si dos nombres chocan o ya existen:"));
-                ui.radio_value(&mut self.conflicts, 0, tr("No renombrar esos elementos"));
-                ui.radio_value(&mut self.conflicts, 1, tr("Añadir (2), (3)… automáticamente"));
+                ui.selectable_value(&mut self.conflicts, 0, tr("No renombrar esos elementos"));
+                ui.selectable_value(&mut self.conflicts, 1, tr("Añadir (2), (3)… automáticamente"));
             });
             ui.collapsing(tr("💾 Preajustes"), |ui| {
                 ui.horizontal(|ui| {
@@ -1305,31 +1305,7 @@ impl Renamer {
 
 // ---- the same layout for every rule: a label column on the left, its controls on the right ----
 
-const LABEL_W: f32 = 92.0;
-
-/// One labelled line of a rule's options.
-fn field(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
-    ui.horizontal(|ui| {
-        crate::checksum::cell(ui, LABEL_W, 20.0, |ui| ui.label(RichText::new(label).color(theme::p().sub)));
-        add(ui);
-    });
-}
-
-/// A choice among a few options, always shown as the same row of buttons.
-fn choice(ui: &mut egui::Ui, value: &mut u8, options: &[&str]) {
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        for (k, l) in options.iter().enumerate() {
-            ui.selectable_value(value, k as u8, tr(l));
-        }
-    });
-}
-
-fn bool_choice(ui: &mut egui::Ui, value: &mut bool, off: &str, on: &str) {
-    let mut v = *value as u8;
-    choice(ui, &mut v, &[off, on]);
-    *value = v == 1;
-}
+use crate::ui_kit::{bool_choice, choice, field, note, LABEL_W};
 
 /// A text box for text with placeholders, and buttons that add the usual ones.
 fn text_with_codes(ui: &mut egui::Ui, text: &mut String, hint: &str, codes: &[&str]) {
@@ -1345,10 +1321,6 @@ fn text_with_codes(ui: &mut egui::Ui, text: &mut String, hint: &str, codes: &[&s
             }
         }
     });
-}
-
-fn note(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).small().color(theme::p().muted));
 }
 
 /// Where a counter or a total goes: start, end or a position, with its separator.

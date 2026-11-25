@@ -611,7 +611,7 @@ impl Imager {
             if ui.add_enabled(!sel.is_empty(), egui::Button::new(trf!("➕ Añadir seleccionados ({})", sel.len()))).on_hover_text(tr("Se añaden las imágenes y las carpetas; de las carpetas se toman sus imágenes.")).clicked() {
                 self.add(sel);
             }
-            if ui.button(tr("📂 Elegir archivos…")).clicked() {
+            if ui.button(tr("📂 Examinar…")).clicked() {
                 self.picker = Some(Picker::new(self.items.last().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_else(|| cwd.to_path_buf())));
             }
             if ui.add_enabled(!self.items.is_empty(), egui::Button::new(tr("🧹 Vaciar lista"))).clicked() {
@@ -644,7 +644,7 @@ impl Imager {
         });
         if matches!(self.o.fmt, Fmt::Jpeg | Fmt::Avif | Fmt::Keep) {
             ui.horizontal(|ui| {
-                ui.add_sized([120.0, 18.0], egui::Label::new(tr(if self.o.fmt == Fmt::Avif { "Calidad AVIF" } else { "Calidad JPEG" })));
+                crate::ui_kit::label(ui, tr(if self.o.fmt == Fmt::Avif { "Calidad AVIF" } else { "Calidad JPEG" }));
                 ui.add(egui::Slider::new(&mut self.o.quality, 1..=100));
                 ui.label(RichText::new(tr(if self.o.quality >= 90 { "casi sin pérdida, pesa más" } else if self.o.quality >= 70 { "equilibrada" } else { "pequeña, se nota la compresión" })).small().color(theme::p().sub));
             });
@@ -664,7 +664,7 @@ impl Imager {
         ui.label(RichText::new(tr("TAMAÑO")).small().strong().color(theme::p().sub));
         ui.horizontal_wrapped(|ui| {
             for (r, label, desc) in RESIZES {
-                ui.radio_value(&mut self.o.resize, r, tr(label)).on_hover_text(tr(desc));
+                ui.selectable_value(&mut self.o.resize, r, tr(label)).on_hover_text(tr(desc));
             }
         });
         ui.horizontal_wrapped(|ui| match self.o.resize {
@@ -704,7 +704,7 @@ impl Imager {
     fn output_ui(&mut self, ui: &mut egui::Ui, cwd: &Path, selection: &[PathBuf]) {
         ui.label(RichText::new(tr("NOMBRE Y DESTINO")).small().strong().color(theme::p().sub));
         ui.horizontal(|ui| {
-            ui.add_sized([90.0, 18.0], egui::Label::new(tr("Nombre")));
+            crate::ui_kit::label(ui, tr("Nombre"));
             ui.add(egui::TextEdit::singleline(&mut self.o.name).desired_width(260.0).font(egui::TextStyle::Monospace)).on_hover_text(tr("Admite {nombre}, {ancho}, {alto}, {n} y {formato}"));
             for c in ["{nombre}", "{ancho}", "{alto}", "{n}"] {
                 if ui.small_button(c).clicked() {
@@ -713,17 +713,17 @@ impl Imager {
             }
         });
         ui.horizontal_wrapped(|ui| {
-            ui.add_sized([90.0, 18.0], egui::Label::new(tr("Guardar en")));
-            ui.radio_value(&mut self.o.dest_other, false, tr("Junto al original"));
-            ui.radio_value(&mut self.o.dest_other, true, tr("Otra carpeta"));
+            crate::ui_kit::label(ui, tr("Guardar en"));
+            ui.selectable_value(&mut self.o.dest_other, false, tr("Junto al original"));
+            ui.selectable_value(&mut self.o.dest_other, true, tr("Otra carpeta"));
             if self.o.dest_other {
                 self.dest.ui(ui, cwd, selection);
             }
         });
         ui.horizontal_wrapped(|ui| {
-            ui.add_sized([90.0, 18.0], egui::Label::new(tr("Si ya existe")));
+            crate::ui_kit::label(ui, tr("Si ya existe"));
             for (k, l) in CONFLICTS.iter().enumerate() {
-                ui.radio_value(&mut self.o.conflict, k as u8, tr(l));
+                ui.selectable_value(&mut self.o.conflict, k as u8, tr(l));
             }
         });
         if self.o.conflict == 1 && !self.o.dest_other && !self.o.name.contains('{') {
@@ -737,7 +737,7 @@ impl Imager {
             ui.horizontal(|ui| {
                 ui.label(tr("Girar"));
                 for (k, l) in ["0°", "90° →", "180°", "270° ←"].iter().enumerate() {
-                    ui.radio_value(&mut self.o.rotate, k as u8, *l);
+                    ui.selectable_value(&mut self.o.rotate, k as u8, *l);
                 }
                 ui.checkbox(&mut self.o.flip_h, tr("Voltear horizontal"));
                 ui.checkbox(&mut self.o.flip_v, tr("Voltear vertical"));

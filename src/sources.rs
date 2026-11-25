@@ -107,16 +107,16 @@ impl Sources {
             ui.separator();
             ui.checkbox(&mut self.recursive, tr("Incluir subcarpetas"));
             ui.checkbox(&mut self.hidden, tr("Incluir ocultos"));
-            ui.checkbox(&mut self.regex, tr("Expresiones regulares")).on_hover_text(tr("Los filtros de nombre se leen como expresiones regulares (sin distinguir mayúsculas), p. ej. \\.(jpg|png)$ o ^IMG_\\d+"));
+            ui.checkbox(&mut self.regex, tr("Expresión regular")).on_hover_text(tr("Los filtros de nombre se leen como expresiones regulares (sin distinguir mayúsculas), p. ej. \\.(jpg|png)$ o ^IMG_\\d+"));
         });
         egui::Grid::new((self.id, "filters")).num_columns(2).spacing([10.0, 4.0]).show(ui, |ui| {
-            ui.label(tr("Incluir solo"));
+            crate::ui_kit::label(ui, tr("Incluir solo"));
             ui.add(egui::TextEdit::singleline(&mut self.include).hint_text(if self.regex { "\\.(jpg|png)$" } else { "*.jpg; *.png" }).desired_width(f32::INFINITY)).on_hover_text(tr("Patrones de nombre separados por «;», con * y ?. Vacío = todos. Solo afecta a los archivos de las carpetas."));
             ui.end_row();
-            ui.label(tr("Excluir"));
+            crate::ui_kit::label(ui, tr("Excluir"));
             ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text(if self.regex { "\\.(tmp|log)$" } else { "*.tmp; *.log" }).desired_width(f32::INFINITY));
             ui.end_row();
-            ui.label(tr("Saltar carpetas"));
+            crate::ui_kit::label(ui, tr("Saltar carpetas"));
             ui.add(egui::TextEdit::singleline(&mut self.exclude_dirs).desired_width(f32::INFINITY));
             ui.end_row();
         });
