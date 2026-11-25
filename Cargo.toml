@@ -38,6 +38,7 @@ argon2 = "0.5"
 encoding_rs = "0.8"
 getrandom = "0.3"
 little_exif = "0.6.23"
+similar = "3.2.1"
 
 # eframe solo trae Metal y WebGPU en wgpu: sin esto, en Windows no había ningún controlador
 # gráfico de reserva. DirectX 12 incluye el dibujo por software de Windows (WARP), que

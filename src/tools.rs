@@ -33,6 +33,7 @@ pub enum Kind {
     TextConv,
     Replace,
     Meta,
+    Compare,
     Shred,
     ChangeDate,
     Attributes,
@@ -43,7 +44,7 @@ pub enum Kind {
 
 pub const GROUPS: [(&str, &[Kind]); 4] = [
     ("Nombres y listas", &[Kind::BatchRename, Kind::CopyList, Kind::PackToFolder, Kind::Symlink]),
-    ("Análisis", &[Kind::Checksum, Kind::Duplicates, Kind::Grep, Kind::Replace, Kind::TextConv, Kind::Meta]),
+    ("Análisis", &[Kind::Checksum, Kind::Duplicates, Kind::Grep, Kind::Replace, Kind::TextConv, Kind::Meta, Kind::Compare]),
     ("Organizar", &[Kind::Sync, Kind::Compress, Kind::Extract, Kind::Organize, Kind::MakeFolders, Kind::Images, Kind::Crypt, Kind::Split, Kind::Join, Kind::ChangeDate, Kind::Attributes]),
     ("Limpieza", &[Kind::DeleteByMask, Kind::RemoveEmpty, Kind::Shred]),
 ];
@@ -69,6 +70,7 @@ impl Kind {
             Kind::TextConv => tr("Texto: saltos de línea y codificación"),
             Kind::Replace => tr("Buscar y reemplazar en archivos"),
             Kind::Meta => tr("Metadatos: EXIF y etiquetas"),
+            Kind::Compare => tr("Comparar archivos"),
             Kind::Shred => tr("Borrado seguro"),
             Kind::ChangeDate => tr("Cambiar fecha"),
             Kind::Attributes => tr("Atributos"),
@@ -97,6 +99,7 @@ impl Kind {
             Kind::TextConv => "📝",
             Kind::Replace => "🔁",
             Kind::Meta => "🏷",
+            Kind::Compare => "⚖",
             Kind::Shred => "🔥",
             Kind::ChangeDate => "🕓",
             Kind::Attributes => "🔒",
@@ -120,6 +123,7 @@ impl Kind {
             Kind::Crypt => tr("Protege archivos con una contraseña (XChaCha20-Poly1305 y Argon2id), con verificación y opción de ocultar el nombre."),
             Kind::MakeFolders => tr("Crea de golpe un árbol de carpetas a partir de una lista, con plantillas y vista previa."),
             Kind::TextConv => tr("Cambia los saltos de línea (LF, CRLF), la codificación (UTF-8, UTF-16, Windows-1252…), tabuladores y espacios sobrantes en muchos archivos de texto."),
+            Kind::Compare => tr("Compara dos archivos de texto lado a lado, con las palabras cambiadas resaltadas, o dos archivos binarios byte a byte."),
             Kind::Meta => tr("Mira y edita el EXIF de las fotos y las etiquetas de la música en muchos archivos, y quita los metadatos o la ubicación GPS antes de compartir."),
             Kind::Replace => tr("Cambia un texto por otro dentro de muchos archivos a la vez, con expresiones regulares, vista previa y copia de seguridad."),
             Kind::Grep => tr("Busca un texto o una expresión regular dentro de los archivos y muestra las líneas que coinciden."),
@@ -135,7 +139,7 @@ impl Kind {
     }
     /// Whether the tool works without a selection (on the current folder).
     pub fn folder_ok(self) -> bool {
-        matches!(self, Kind::Duplicates | Kind::DeleteByMask | Kind::RemoveEmpty | Kind::Sync | Kind::Compress | Kind::Extract | Kind::Organize | Kind::Grep | Kind::Images | Kind::Crypt | Kind::MakeFolders | Kind::TextConv | Kind::Replace | Kind::Meta | Kind::CopyList | Kind::BatchRename | Kind::Checksum)
+        matches!(self, Kind::Duplicates | Kind::DeleteByMask | Kind::RemoveEmpty | Kind::Sync | Kind::Compress | Kind::Extract | Kind::Organize | Kind::Grep | Kind::Images | Kind::Crypt | Kind::MakeFolders | Kind::TextConv | Kind::Replace | Kind::Meta | Kind::Compare | Kind::CopyList | Kind::BatchRename | Kind::Checksum)
     }
 }
 
@@ -183,6 +187,7 @@ pub struct ToolWindow {
     replacer: Option<crate::replace::Replacer>,
     checksummer: Option<crate::checksum::Checksummer>,
     metatool: Option<crate::meta::MetaTool>,
+    comparer: Option<crate::compare::Comparer>,
     emptydirs: Option<crate::emptydirs::EmptyDirs>,
     // dividir
     part_mb: f64,
@@ -259,6 +264,7 @@ impl ToolWindow {
             replacer: None,
             checksummer: None,
             metatool: None,
+            comparer: None,
             emptydirs: None,
             part_mb: 100.0,
             recursive: true,
@@ -311,6 +317,9 @@ impl ToolWindow {
         if kind == Kind::TextConv {
             t.textconv = Some(crate::textconv::TextConv::new(t.targets.clone()));
         }
+        if kind == Kind::Compare {
+            t.comparer = Some(crate::compare::Comparer::new(t.targets.clone(), t.base.clone()));
+        }
         if kind == Kind::Meta {
             t.metatool = Some(crate::meta::MetaTool::new(t.targets.clone()));
         }
@@ -357,7 +366,7 @@ impl ToolWindow {
     pub fn show(&mut self, ctx: &egui::Context, events: &mut Vec<ToolEvent>, selection: &[PathBuf], cwd: &Path) {
         self.poll(events);
         let title = format!("{}  {}", self.kind.icon(), self.kind.label());
-        let big = matches!(self.kind, Kind::BatchRename | Kind::Duplicates | Kind::Sync | Kind::DeleteByMask | Kind::Compress | Kind::Extract | Kind::Organize | Kind::Grep | Kind::Images | Kind::Crypt | Kind::MakeFolders | Kind::TextConv | Kind::Replace | Kind::Checksum | Kind::RemoveEmpty | Kind::Meta);
+        let big = matches!(self.kind, Kind::BatchRename | Kind::Duplicates | Kind::Sync | Kind::DeleteByMask | Kind::Compress | Kind::Extract | Kind::Organize | Kind::Grep | Kind::Images | Kind::Crypt | Kind::MakeFolders | Kind::TextConv | Kind::Replace | Kind::Checksum | Kind::RemoveEmpty | Kind::Meta | Kind::Compare);
         if ctx.embed_viewports() {
             // No separate operating-system windows (screenshots, web): a window inside the main one.
             let mut open = self.open;
@@ -408,6 +417,11 @@ impl ToolWindow {
                     Kind::BatchRename => {
                         if let Some(r) = &mut self.renamer {
                             r.ui(ui, events, selection, cwd);
+                        }
+                    }
+                    Kind::Compare => {
+                        if let Some(x) = &mut self.comparer {
+                            x.ui(ui, events, selection, cwd);
                         }
                     }
                     Kind::Meta => {
@@ -571,6 +585,9 @@ impl ToolWindow {
             x.demo(dir);
         }
         if let Some(x) = &mut self.metatool {
+            x.demo(dir);
+        }
+        if let Some(x) = &mut self.comparer {
             x.demo(dir);
         }
         if let Some(x) = &mut self.emptydirs {

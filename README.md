@@ -16,6 +16,7 @@ portugués y francés, con temas claro, oscuro y automático.
 - **Buscar texto** y **buscar y reemplazar** en muchos archivos.
 - **Imágenes**: convertir (PNG, JPEG, WebP, BMP, GIF, TIFF, AVIF), redimensionar, girar por EXIF.
 - **Metadatos**: ver y editar el EXIF de las fotos y las etiquetas de la música en lote, y quitar metadatos o la ubicación GPS.
+- **Comparar archivos**: texto lado a lado con las palabras cambiadas resaltadas, o binarios byte a byte.
 - **Cifrar y descifrar** (XChaCha20-Poly1305 + Argon2id).
 - **Texto**: saltos de línea, codificación, tabuladores y espacios sobrantes.
 - **Crear carpetas desde una lista**, sumas de verificación, cambiar fechas y atributos, crear enlaces…
