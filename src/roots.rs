@@ -38,11 +38,13 @@ pub fn folder_window(ctx: &egui::Context, id: &str, slot: &mut Option<Browser>, 
             }
         });
         ui.separator();
-        egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 270.0)).auto_shrink([false, false]).show(ui, |ui| {
+        let n_entries = b.entries.len();
+        egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 270.0)).auto_shrink([false, false]).show_rows(ui, 26.0, n_entries.max(1), |ui, range| {
             if b.entries.is_empty() {
                 ui.label(RichText::new(tr("No hay subcarpetas.")).color(theme::p().muted));
             }
-            for (name, p) in &b.entries {
+            for k in range {
+                let Some((name, p)) = b.entries.get(k) else { break };
                 ui.horizontal(|ui| {
                     if ui.small_button("✔").on_hover_text(tr("Elegir esta carpeta")).clicked() {
                         picks.push(p.clone());
@@ -242,9 +244,11 @@ pub fn picker_window(ctx: &egui::Context, id: &str, slot: &mut Option<Picker>) -
             }
         });
         ui.separator();
-        egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 330.0)).auto_shrink([false, false]).show(ui, |ui| {
-            let entries = pk.entries.clone();
-            for (name, path, is_dir) in &entries {
+        let n_entries = pk.entries.len();
+        egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 330.0)).auto_shrink([false, false]).show_rows(ui, 26.0, n_entries, |ui, range| {
+            // Only the visible rows are drawn (and copied): a folder can hold tens of thousands of entries.
+            for k in range {
+                let (name, path, is_dir) = &pk.entries[k].clone();
                 ui.horizontal(|ui| {
                     let mut on = pk.checked.contains(path);
                     if ui.checkbox(&mut on, "").changed() {

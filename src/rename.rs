@@ -2088,14 +2088,14 @@ fn fmt_naive(dt: chrono::NaiveDateTime, fmt: &str) -> String {
 #[derive(Default)]
 pub struct Tags {
     pub(crate) taken: Option<chrono::NaiveDateTime>,
-    camera: Option<String>,
+    pub(crate) camera: Option<String>,
     size: Option<(usize, usize)>,
-    artist: Option<String>,
-    album: Option<String>,
+    pub(crate) artist: Option<String>,
+    pub(crate) album: Option<String>,
     title: Option<String>,
-    genre: Option<String>,
+    pub(crate) genre: Option<String>,
     track: Option<u32>,
-    year: Option<u32>,
+    pub(crate) year: Option<u32>,
     duration: Option<u64>,
 }
 

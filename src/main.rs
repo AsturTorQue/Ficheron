@@ -11,7 +11,10 @@ mod crypt;
 mod grep;
 mod images;
 mod icon;
+mod checksum;
+mod emptydirs;
 mod mkdirs;
+mod sources;
 mod netpath;
 mod quicklook;
 mod textconv;
@@ -69,7 +72,7 @@ fn main() -> eframe::Result<()> {
                 theme::set_theme(v.parse().unwrap_or(0));
             }
             i += 2;
-        } else if let Some(t) = ["--extract", "--organize", "--grep", "--images", "--crypt", "--mkdirs", "--text", "--replace"].iter().find(|t| **t == args[i]) {
+        } else if let Some(t) = ["--extract", "--organize", "--grep", "--images", "--crypt", "--mkdirs", "--text", "--replace", "--checksum", "--empty"].iter().find(|t| **t == args[i]) {
             open_tool = Some(t);
             i += 1;
         } else if args[i] == "--compress" {
@@ -417,13 +420,15 @@ impl App {
                 "--mkdirs" => Kind::MakeFolders,
                 "--text" => Kind::TextConv,
                 "--replace" => Kind::Replace,
+                "--checksum" => Kind::Checksum,
+                "--empty" => Kind::RemoveEmpty,
                 _ => Kind::Grep,
             };
             let mut t = ToolWindow::new(0, kind, vec![], app.cwd.clone());
             match kind {
                 Kind::Extract => t.extract_demo(&app.cwd),
                 Kind::Organize => t.organize_demo(&app.cwd),
-                Kind::Images | Kind::Crypt | Kind::MakeFolders | Kind::TextConv | Kind::Replace => t.new_demo(&app.cwd),
+                Kind::Images | Kind::Crypt | Kind::MakeFolders | Kind::TextConv | Kind::Replace | Kind::Checksum | Kind::RemoveEmpty => t.new_demo(&app.cwd),
                 _ => t.grep_demo(&app.cwd, "mundo"),
             }
             app.tools.push(t);
@@ -595,10 +600,16 @@ impl App {
     }
 
     fn selected_paths(&self) -> Vec<PathBuf> {
+        if self.selection.is_empty() {
+            return vec![];
+        }
         self.visible.iter().filter(|e| self.selection.contains(&e.path)).map(|e| e.path.clone()).collect()
     }
 
     fn selected_entries(&self) -> Vec<&Entry> {
+        if self.selection.is_empty() {
+            return vec![];
+        }
         self.visible.iter().filter(|e| self.selection.contains(&e.path)).collect()
     }
 

@@ -17,14 +17,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Instant, SystemTime};
 
-const MODES: [(&str, &str); 6] = [
+const MODES: [(&str, &str); 13] = [
     ("Por tipo", "Imágenes, vídeos, música, documentos, comprimidos…"),
     ("Por extensión", "Una carpeta por cada extensión: PDF, JPG, MP3…"),
     ("Por fecha", "Carpetas por año y mes, o con la plantilla que quieras."),
     ("Por inicial", "Una carpeta por la primera letra del nombre: A, B, C…"),
     ("Por tamaño", "Pequeños, medianos, grandes y enormes."),
     ("Reglas propias", "Tú decides qué patrón va a qué carpeta."),
+    ("Por tipo y año", "Primero el tipo y dentro el año: Imágenes/2024, Documentos/2023…"),
+    ("Por antigüedad", "Hoy, esta semana, este mes, este año y más antiguos."),
+    ("Por orientación", "Fotos horizontales, verticales y cuadradas."),
+    ("Por artista y álbum", "Música ordenada con sus etiquetas: Artista/Álbum."),
+    ("Por cámara", "Fotos agrupadas por la marca y el modelo de la cámara (EXIF)."),
+    ("Por prefijo del nombre", "La primera palabra del nombre, hasta un espacio, guion o punto bajo."),
+    ("Por megapíxeles", "Imágenes por resolución: menos de 1 MP, de 1 a 5, de 5 a 12 y más de 12."),
 ];
+/// The order modes are shown in (the number of each is what profiles remember).
+const ORDER: [u8; 13] = [0, 6, 1, 2, 7, 3, 4, 8, 12, 10, 9, 11, 5];
 const DATE_SRC: [&str; 3] = ["Fecha de modificación", "Fecha de creación", "Fecha de la foto (EXIF), si la tiene"];
 const CONFLICTS: [&str; 3] = ["Cambiar el nombre (copia)", "Sobrescribir", "Omitir"];
 
@@ -151,6 +160,55 @@ fn classify(path: &Path, meta: &fs::Metadata, c: &Cfg) -> Option<String> {
                 })
                 .to_string(),
             )
+        }
+        6 => {
+            let t: chrono::DateTime<Local> = mtime_of(meta, c.date_src.min(1)).into();
+            Some(format!("{}/{}", tr(category(&ext)), t.year()))
+        }
+        7 => {
+            let t: chrono::DateTime<Local> = mtime_of(meta, c.date_src.min(1)).into();
+            let days = (Local::now().date_naive() - t.date_naive()).num_days();
+            Some(
+                tr(if days <= 0 {
+                    "Hoy"
+                } else if days < 7 {
+                    "Esta semana"
+                } else if days < 31 {
+                    "Este mes"
+                } else if days < 365 {
+                    "Este año"
+                } else {
+                    "Más antiguos"
+                })
+                .to_string(),
+            )
+        }
+        8 => {
+            let (w, h) = imagesize::size(path).ok().map(|d| (d.width, d.height))?;
+            Some(tr(if w > h { "Horizontales" } else if h > w { "Verticales" } else { "Cuadradas" }).to_string())
+        }
+        9 => {
+            let t = crate::rename::read_tags(path);
+            Some(match (t.artist.map(|a| clean_part(&a)).filter(|a| !a.is_empty()), t.album.map(|a| clean_part(&a)).filter(|a| !a.is_empty())) {
+                (Some(a), Some(b)) => format!("{a}/{b}"),
+                (Some(a), None) => a,
+                _ => tr("Sin etiquetas").to_string(),
+            })
+        }
+        10 => {
+            let cam = crate::rename::read_tags(path).camera.map(|a| clean_part(&a)).filter(|a| !a.is_empty());
+            Some(cam.unwrap_or_else(|| tr("Sin cámara").to_string()))
+        }
+        11 => {
+            let stem = Path::new(&name).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            let first = stem.split([' ', '-', '_', '.']).find(|p| !p.is_empty()).unwrap_or("");
+            let f = clean_part(first);
+            Some(if f.is_empty() { "#".to_string() } else { f })
+        }
+        12 => {
+            let (w, h) = imagesize::size(path).ok().map(|d| (d.width, d.height))?;
+            let mp = (w * h) as f64 / 1_000_000.0;
+            Some(tr(if mp < 1.0 { "Menos de 1 MP" } else if mp < 5.0 { "De 1 a 5 MP" } else if mp < 12.0 { "De 5 a 12 MP" } else { "Más de 12 MP" }).to_string())
         }
         _ => c.rules.iter().find(|(re, _)| re.is_match(&name)).map(|(_, f)| f.clone()).or_else(|| (!c.other.trim().is_empty()).then(|| c.other.clone())).map(|f| f.split(['/', '\\']).map(clean_part).filter(|p| !p.is_empty()).collect::<Vec<_>>().join("/")).filter(|f| !f.is_empty()),
     }
@@ -346,6 +404,7 @@ pub struct Organizer {
     problems: Vec<String>,
     undo: Vec<Vec<(PathBuf, PathBuf)>>,
     filter: String,
+    view_cache: crate::tools::ViewCache,
     roots_snapshot: Vec<PathBuf>,
 }
 
@@ -374,6 +433,7 @@ impl Organizer {
             problems: vec![],
             undo: vec![],
             filter: String::new(),
+            view_cache: Default::default(),
             roots_snapshot: vec![],
         }
     }
@@ -531,8 +591,9 @@ impl Organizer {
     fn mode_ui(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new(tr("ORGANIZAR")).small().strong().color(theme::p().sub));
         ui.horizontal_wrapped(|ui| {
-            for (k, (name, desc)) in MODES.iter().enumerate() {
-                ui.radio_value(&mut self.mode, k as u8, tr(name)).on_hover_text(tr(desc));
+            for k in ORDER {
+                let (name, desc) = MODES[k as usize];
+                ui.radio_value(&mut self.mode, k, tr(name)).on_hover_text(tr(desc));
             }
         });
         ui.label(RichText::new(tr(MODES[self.mode as usize].1)).small().color(theme::p().sub));
@@ -553,6 +614,17 @@ impl Organizer {
                         ui.radio_value(&mut self.date_src, k as u8, tr(l));
                     }
                 });
+            }
+            6 | 7 => {
+                ui.horizontal_wrapped(|ui| {
+                    ui.add_sized([100.0, 18.0], egui::Label::new(tr("Usar")));
+                    for (k, l) in DATE_SRC.iter().take(2).enumerate() {
+                        ui.radio_value(&mut self.date_src, k as u8, tr(l));
+                    }
+                });
+            }
+            8 | 12 => {
+                ui.label(RichText::new(tr("Solo se tocan las imágenes; el resto se queda donde está.")).small().color(theme::p().muted));
             }
             5 => {
                 let mut remove = None;
@@ -683,7 +755,8 @@ impl Organizer {
             }
         });
         let q = self.filter.to_lowercase();
-        let view: Vec<usize> = plan.moves.iter().enumerate().filter(|(_, m)| q.is_empty() || m.from.to_string_lossy().to_lowercase().contains(&q) || m.folder.to_lowercase().contains(&q)).map(|(i, _)| i).collect();
+        let salt = ((plan.moves.len() as u64) << 24) ^ ((plan.moves.as_ptr() as u64) << 8);
+        let view = self.view_cache.get(&self.filter, salt, || plan.moves.iter().enumerate().filter(|(_, m)| q.is_empty() || m.from.to_string_lossy().to_lowercase().contains(&q) || m.folder.to_lowercase().contains(&q)).map(|(i, _)| i).collect());
         let mut toggles = vec![];
         egui::ScrollArea::vertical().id_salt("organize_plan").max_height(crate::tools::grow(ui, 260.0)).auto_shrink([false, false]).show_rows(ui, 22.0, view.len(), |ui, range| {
             for &i in &view[range] {

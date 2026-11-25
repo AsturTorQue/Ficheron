@@ -130,6 +130,7 @@ pub struct Purge {
     truncated: bool,
     sort: u8,
     filter: String,
+    view_cache: crate::tools::ViewCache,
     status: Option<(String, bool)>,
     problems: Vec<String>,
     browser: Option<Browser>,
@@ -332,6 +333,7 @@ impl Purge {
             truncated: false,
             sort: 0,
             filter: String::new(),
+            view_cache: Default::default(),
             status: None,
             problems: vec![],
             browser: None,
@@ -750,7 +752,8 @@ impl Purge {
             }
         });
         let q = self.filter.to_lowercase();
-        let view: Vec<usize> = self.found.iter().enumerate().filter(|(_, i)| q.is_empty() || i.path.to_string_lossy().to_lowercase().contains(&q)).map(|(k, _)| k).collect();
+        let salt = ((self.found.len() as u64) << 8) | self.sort as u64;
+        let view = self.view_cache.get(&self.filter, salt, || self.found.iter().enumerate().filter(|(_, i)| q.is_empty() || i.path.to_string_lossy().to_lowercase().contains(&q)).map(|(k, _)| k).collect()); 
         let row_h = 22.0;
         let mut toggles = vec![];
         egui::ScrollArea::vertical().id_salt("purge_list").max_height(crate::tools::grow(ui, 240.0)).auto_shrink([false, false]).show_rows(ui, row_h, view.len(), |ui, range| {

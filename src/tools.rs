@@ -105,12 +105,12 @@ impl Kind {
     pub fn description(self) -> &'static str {
         match self {
             Kind::BatchRename => tr("Cambia el nombre de muchos archivos a la vez: buscar y reemplazar, prefijos, numeración, mayúsculas."),
-            Kind::Checksum => tr("Calcula CRC32, SHA-1 o SHA-256 y compara con un valor esperado."),
+            Kind::Checksum => tr("Calcula CRC32, SHA-1, SHA-256, SHA-512 y BLAKE3 de muchos archivos y carpetas, y los compara con un valor, una lista o un archivo de sumas."),
             Kind::Duplicates => tr("Busca archivos repetidos en una o varias carpetas, por contenido, nombre o tamaño, y decide qué hacer con las copias."),
             Kind::Split => tr("Corta un archivo grande en partes de un tamaño fijo."),
             Kind::Join => tr("Vuelve a unir las partes (.001, .002…) en un solo archivo."),
             Kind::DeleteByMask => tr("Busca y borra archivos o carpetas por patrón (comodines o regex), tamaño y antigüedad, revisando antes la lista."),
-            Kind::RemoveEmpty => tr("Elimina las carpetas que no contienen nada."),
+            Kind::RemoveEmpty => tr("Busca y elimina las carpetas vacías (o que solo tienen archivos basura) de las carpetas que elijas, con o sin subcarpetas."),
             Kind::Extract => tr("Abre zip, 7z, tar.gz, tar.xz, tar.zst y más, con contraseña, en una carpeta propia y sin que ningún archivo se salga de ella."),
             Kind::Organize => tr("Reparte los archivos de una carpeta en subcarpetas por tipo, extensión, fecha, inicial, tamaño o reglas propias, con vista previa y deshacer."),
             Kind::Images => tr("Convierte entre PNG, JPEG, WebP, BMP, GIF y TIFF, cambia el tamaño, gira según el EXIF y procesa muchas fotos a la vez."),
@@ -141,16 +141,7 @@ pub enum ToolEvent {
     Navigate(PathBuf),
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Algo {
-    Crc32,
-    Sha1,
-    Sha256,
-}
-
 enum Out {
-    Hashes(Vec<(PathBuf, String)>),
-    Paths(Vec<PathBuf>),
     Done(String),
 }
 
@@ -186,14 +177,12 @@ pub struct ToolWindow {
     mkdirs: Option<crate::mkdirs::MakeFolders>,
     textconv: Option<crate::textconv::TextConv>,
     replacer: Option<crate::replace::Replacer>,
-    // suma
-    algo: Algo,
-    expected: String,
+    checksummer: Option<crate::checksum::Checksummer>,
+    emptydirs: Option<crate::emptydirs::EmptyDirs>,
     // dividir
     part_mb: f64,
     // patrón
     recursive: bool,
-    permanent: bool,
     // sincronizar
     dest: String,
     // borrado seguro
@@ -211,9 +200,28 @@ pub struct ToolWindow {
     name: String,
     // resultados
     job: Option<Job>,
-    out: Option<Out>,
     errors: Vec<String>,
     status: Option<(String, bool)>,
+}
+
+/// The indexes of the rows a text filter lets through, kept until the filter, the list or its
+/// ordering change. With tens of thousands of rows, lowercasing every path on every frame is
+/// what made the lists feel stuck.
+#[derive(Default)]
+pub struct ViewCache(Option<((String, u64), Vec<usize>)>);
+
+impl ViewCache {
+    /// `salt` must change whenever the list's content or order does (length, sort, toggles…).
+    pub fn get(&mut self, filter: &str, salt: u64, build: impl FnOnce() -> Vec<usize>) -> Vec<usize> {
+        if let Some(((f, s), v)) = &self.0 {
+            if f == filter && *s == salt {
+                return v.clone();
+            }
+        }
+        let v = build();
+        self.0 = Some(((filter.to_string(), salt), v.clone()));
+        v
+    }
 }
 
 /// A list height that grows with the window it is in (`base` at 800 px tall, up to three times
@@ -244,11 +252,10 @@ impl ToolWindow {
             mkdirs: None,
             textconv: None,
             replacer: None,
-            algo: Algo::Sha256,
-            expected: String::new(),
+            checksummer: None,
+            emptydirs: None,
             part_mb: 100.0,
             recursive: true,
-            permanent: false,
             dest: String::new(),
             passes: 1,
             confirm: false,
@@ -263,7 +270,6 @@ impl ToolWindow {
                 _ => String::new(),
             },
             job: None,
-            out: None,
             errors: vec![],
             status: None,
             targets,
@@ -298,6 +304,12 @@ impl ToolWindow {
         }
         if kind == Kind::TextConv {
             t.textconv = Some(crate::textconv::TextConv::new(t.targets.clone()));
+        }
+        if kind == Kind::Checksum {
+            t.checksummer = Some(crate::checksum::Checksummer::new(t.targets.clone(), t.base.clone()));
+        }
+        if kind == Kind::RemoveEmpty {
+            t.emptydirs = Some(crate::emptydirs::EmptyDirs::new(t.targets.clone(), t.base.clone()));
         }
         if kind == Kind::Replace {
             t.replacer = Some(crate::replace::Replacer::new(t.targets.clone()));
@@ -336,7 +348,7 @@ impl ToolWindow {
     pub fn show(&mut self, ctx: &egui::Context, events: &mut Vec<ToolEvent>, selection: &[PathBuf], cwd: &Path) {
         self.poll(events);
         let title = format!("{}  {}", self.kind.icon(), self.kind.label());
-        let big = matches!(self.kind, Kind::BatchRename | Kind::Duplicates | Kind::Sync | Kind::DeleteByMask | Kind::Compress | Kind::Extract | Kind::Organize | Kind::Grep | Kind::Images | Kind::Crypt | Kind::MakeFolders | Kind::TextConv | Kind::Replace);
+        let big = matches!(self.kind, Kind::BatchRename | Kind::Duplicates | Kind::Sync | Kind::DeleteByMask | Kind::Compress | Kind::Extract | Kind::Organize | Kind::Grep | Kind::Images | Kind::Crypt | Kind::MakeFolders | Kind::TextConv | Kind::Replace | Kind::Checksum | Kind::RemoveEmpty);
         if ctx.embed_viewports() {
             // No separate operating-system windows (screenshots, web): a window inside the main one.
             let mut open = self.open;
@@ -389,7 +401,11 @@ impl ToolWindow {
                             r.ui(ui, events, selection, cwd);
                         }
                     }
-                    Kind::Checksum => self.ui_checksum(ui, events),
+                    Kind::Checksum => {
+                        if let Some(x) = &mut self.checksummer {
+                            x.ui(ui, events, selection, cwd);
+                        }
+                    }
                     Kind::Duplicates => {
                         if let Some(d) = &mut self.dupes {
                             d.ui(ui, events, selection, cwd);
@@ -402,7 +418,11 @@ impl ToolWindow {
                             pg.ui(ui, events, selection, cwd);
                         }
                     }
-                    Kind::RemoveEmpty => self.ui_empty(ui),
+                    Kind::RemoveEmpty => {
+                        if let Some(x) = &mut self.emptydirs {
+                            x.ui(ui, events, selection, cwd);
+                        }
+                    }
                     Kind::Extract => {
                         if let Some(x) = &mut self.extractor {
                             x.ui(ui, events, selection, cwd);
@@ -533,6 +553,12 @@ impl ToolWindow {
         if let Some(x) = &mut self.replacer {
             x.demo(dir);
         }
+        if let Some(x) = &mut self.checksummer {
+            x.demo(dir);
+        }
+        if let Some(x) = &mut self.emptydirs {
+            x.demo(dir);
+        }
     }
 
     pub fn compress_demo(&mut self, dir: &Path) {
@@ -587,13 +613,8 @@ impl ToolWindow {
             let executes = job.executes;
             self.job = None;
             self.errors = errs;
-            if let Out::Done(s) = &out {
-                self.set_status(s.clone(), false);
-                self.out = None;
-            } else {
-                self.out = Some(out);
-                self.status = None;
-            }
+            let Out::Done(s) = out;
+            self.set_status(s, false);
             if executes {
                 events.push(ToolEvent::Reload);
             }
@@ -622,60 +643,6 @@ impl ToolWindow {
     }
 
     // ---------------- Suma de verificación ----------------
-
-    fn ui_checksum(&mut self, ui: &mut egui::Ui, events: &mut Vec<ToolEvent>) {
-        ui.horizontal(|ui| {
-            ui.label(tr("Algoritmo:"));
-            ui.selectable_value(&mut self.algo, Algo::Crc32, tr("CRC32"));
-            ui.selectable_value(&mut self.algo, Algo::Sha1, tr("SHA-1"));
-            ui.selectable_value(&mut self.algo, Algo::Sha256, tr("SHA-256"));
-            if self.run_button(ui, tr("Calcular"), false) {
-                let files = expand_files(&if self.targets.is_empty() { vec![self.base.clone()] } else { self.targets.clone() });
-                let algo = self.algo;
-                self.spawn(false, move |tx, cancel| {
-                    let mut out = vec![];
-                    let mut errs = vec![];
-                    let n = files.len();
-                    for (i, f) in files.into_iter().enumerate() {
-                        if cancel.load(Ordering::Relaxed) {
-                            errs.push(tr("Cancelado").into());
-                            break;
-                        }
-                        let _ = tx.send(Msg::Progress(format!("{}/{}: {}", i + 1, n, f.file_name().unwrap_or_default().to_string_lossy())));
-                        match hash_file(&f, algo, cancel) {
-                            Ok(h) => out.push((f, h)),
-                            Err(e) => errs.push(format!("{}: {e}", f.display())),
-                        }
-                    }
-                    (Out::Hashes(out), errs)
-                });
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label(tr("Comparar con:"));
-            ui.add(egui::TextEdit::singleline(&mut self.expected).hint_text(tr("pega aquí el valor esperado")).desired_width(f32::INFINITY));
-        });
-        if let Some(Out::Hashes(h)) = &self.out {
-            let exp = self.expected.trim().to_lowercase();
-            egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 240.0)).id_salt("hashes").show(ui, |ui| {
-                egui::Grid::new("hash_tab").striped(true).num_columns(2).show(ui, |ui| {
-                    for (p, v) in h {
-                        let rel = p.strip_prefix(&self.base).unwrap_or(p).to_string_lossy().to_string();
-                        ui.label(rel);
-                        let ok = &exp == v;
-                        let col = if exp.is_empty() { theme::p().text } else if ok { theme::p().ok } else { theme::p().danger };
-                        let mark = if exp.is_empty() { "" } else if ok { " ✔" } else { " ✘" };
-                        ui.label(RichText::new(format!("{v}{mark}")).monospace().color(col));
-                        ui.end_row();
-                    }
-                });
-            });
-            if ui.button(tr("📋 Copiar resultados")).clicked() {
-                let t: Vec<String> = h.iter().map(|(p, v)| format!("{v}  {}", p.file_name().unwrap_or_default().to_string_lossy())).collect();
-                events.push(ToolEvent::Clipboard(t.join("\n")));
-            }
-        }
-    }
 
     // ---------------- Duplicados ----------------
 
@@ -749,73 +716,6 @@ impl ToolWindow {
     }
 
     // ---------------- Eliminar por patrón / carpetas vacías ----------------
-
-    fn ui_empty(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            if self.run_button(ui, tr("Buscar carpetas vacías"), false) {
-                let roots = self.roots();
-                self.spawn(false, move |_tx, cancel| {
-                    let mut out = vec![];
-                    for r in roots {
-                        if let Ok(rd) = fs::read_dir(&r) {
-                            for item in rd.flatten() {
-                                if item.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                                    collect_empty(&item.path(), &mut out, cancel);
-                                }
-                            }
-                        }
-                    }
-                    (Out::Paths(out), vec![])
-                });
-            }
-            ui.label(RichText::new(tr("Incluye carpetas que solo contienen otras carpetas vacías.")).small().color(theme::p().muted));
-        });
-        self.permanent = true;
-        self.paths_result(ui, tr("carpeta(s) vacías"));
-    }
-
-    fn paths_result(&mut self, ui: &mut egui::Ui, what: &str) {
-        let Some(Out::Paths(paths)) = &self.out else { return };
-        ui.label(format!("{} {what}", paths.len()));
-        if paths.is_empty() {
-            return;
-        }
-        egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 220.0)).id_salt("paths").show(ui, |ui| {
-            for p in paths.iter().take(1000) {
-                let rel = p.strip_prefix(&self.base).unwrap_or(p).to_string_lossy().to_string();
-                ui.label(RichText::new(rel).small());
-            }
-            if paths.len() > 1000 {
-                ui.label(trf!("…y {} más", paths.len() - 1000));
-            }
-        });
-        let label = if self.permanent { tr("Eliminar definitivamente") } else { tr("Mover a la papelera") };
-        if self.run_button(ui, label, true) {
-            let paths = paths.clone();
-            let permanent = self.permanent;
-            self.spawn(true, move |tx, cancel| {
-                let mut errs = vec![];
-                let mut ok = 0;
-                let n = paths.len();
-                for (i, p) in paths.iter().enumerate() {
-                    if cancel.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    let _ = tx.send(Msg::Progress(format!("{}/{}", i + 1, n)));
-                    let r = if permanent {
-                        if p.is_dir() { fs::remove_dir(p) } else { fs::remove_file(p) }.map_err(|e| e.to_string())
-                    } else {
-                        trash::delete(p).map_err(|e| e.to_string())
-                    };
-                    match r {
-                        Ok(()) => ok += 1,
-                        Err(e) => errs.push(format!("{}: {e}", p.display())),
-                    }
-                }
-                (Out::Done(trf!("{} elemento(s) eliminados", ok)), errs)
-            });
-        }
-    }
 
     // ---------------- Borrado seguro ----------------
 
@@ -1112,38 +1012,6 @@ fn expand_files(targets: &[PathBuf]) -> Vec<PathBuf> {
     out
 }
 
-fn to_hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
-fn hash_file(p: &Path, algo: Algo, cancel: &AtomicBool) -> io::Result<String> {
-    use sha2::Digest;
-    let mut f = fs::File::open(p)?;
-    let mut buf = vec![0u8; 1 << 16];
-    let mut crc = crc32fast::Hasher::new();
-    let mut s1 = sha1::Sha1::new();
-    let mut s256 = sha2::Sha256::new();
-    loop {
-        if cancel.load(Ordering::Relaxed) {
-            return Err(io::Error::other("cancelado"));
-        }
-        let n = f.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        match algo {
-            Algo::Crc32 => crc.update(&buf[..n]),
-            Algo::Sha1 => s1.update(&buf[..n]),
-            Algo::Sha256 => s256.update(&buf[..n]),
-        }
-    }
-    Ok(match algo {
-        Algo::Crc32 => format!("{:08x}", crc.finalize()),
-        Algo::Sha1 => to_hex(&s1.finalize()),
-        Algo::Sha256 => to_hex(&s256.finalize()),
-    })
-}
-
 fn split_file(file: &Path, part: u64, tx: &Sender<Msg>, cancel: &AtomicBool) -> io::Result<u64> {
     let mut f = fs::File::open(file)?;
     let size = f.metadata()?.len();
@@ -1210,28 +1078,6 @@ fn join_files(parts: &[PathBuf], out: &Path, tx: &Sender<Msg>, cancel: &AtomicBo
 }
 
 /// Adds `dir` (after its empty sub-folders) when nothing but empty folders is inside it.
-fn collect_empty(dir: &Path, out: &mut Vec<PathBuf>, cancel: &AtomicBool) -> bool {
-    if cancel.load(Ordering::Relaxed) {
-        return false;
-    }
-    let Ok(rd) = fs::read_dir(dir) else { return false };
-    let mut empty = true;
-    for item in rd.flatten() {
-        let is_dir = item.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        if is_dir {
-            if !collect_empty(&item.path(), out, cancel) {
-                empty = false;
-            }
-        } else {
-            empty = false;
-        }
-    }
-    if empty {
-        out.push(dir.to_path_buf());
-    }
-    empty
-}
-
 pub(crate) fn shred_file(p: &Path, passes: u32) -> io::Result<()> {
     use std::io::Seek;
     let len = fs::metadata(p)?.len();
@@ -1295,7 +1141,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn split_join_and_empty_folders() {
+    fn split_and_join() {
         let dir = std::env::temp_dir().join(format!("adm-test-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let f = dir.join("datos.bin");
@@ -1309,10 +1155,6 @@ mod tests {
         let out = dir.join("unido.bin");
         join_files(&parts, &out, &tx, &never).unwrap();
         assert_eq!(fs::read(&out).unwrap(), data);
-        let mut empty = vec![];
-        fs::create_dir_all(dir.join("v/a/b")).unwrap();
-        collect_empty(&dir.join("v"), &mut empty, &never);
-        assert_eq!(empty.len(), 3);
         fs::remove_dir_all(&dir).unwrap();
     }
 }

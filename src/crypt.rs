@@ -215,6 +215,7 @@ struct Opts {
     dest: PathBuf,
     conflict: u8,
     keep_dates: bool,
+    #[allow(dead_code)]
     recursive: bool,
     chunk_log2: u8,
 }

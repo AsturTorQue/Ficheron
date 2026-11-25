@@ -239,6 +239,7 @@ pub struct Syncer {
     log: Vec<String>,
     show: [bool; 5],
     filter: String,
+    view_cache: crate::tools::ViewCache,
     confirm: bool,
     browser: Option<Browser>,
     profile_name: String,
@@ -890,6 +891,7 @@ impl Syncer {
             log: vec![],
             show: [true; 5],
             filter: String::new(),
+            view_cache: Default::default(),
             confirm: false,
             browser: None,
             profile_name: String::new(),
@@ -1345,13 +1347,11 @@ impl Syncer {
             }
         });
         let q = self.filter.to_lowercase();
-        let view: Vec<usize> = plan
-            .ops
-            .iter()
-            .enumerate()
-            .filter(|(_, op)| self.show[op.kind.group()] && (q.is_empty() || op.rel.to_lowercase().contains(&q)))
-            .map(|(i, _)| i)
-            .collect();
+        let mask: u64 = self.show.iter().enumerate().map(|(k, b)| (*b as u64) << k).sum();
+        let salt = ((plan.ops.len() as u64) << 24) ^ ((plan.ops.as_ptr() as u64) << 8) ^ mask ^ ((st.conflict as u64) << 40);
+        let view = self.view_cache.get(&self.filter, salt, || {
+            plan.ops.iter().enumerate().filter(|(_, op)| self.show[op.kind.group()] && (q.is_empty() || op.rel.to_lowercase().contains(&q))).map(|(i, _)| i).collect()
+        });
         let row_h = 22.0;
         let mut toggles: Vec<usize> = vec![];
         let mut resolve: Vec<(usize, bool)> = vec![];
