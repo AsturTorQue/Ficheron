@@ -1,13 +1,14 @@
 name: Compilar y publicar
 
-# En cada subida a main se compila y se prueba en Linux, Windows y macOS.
-# Si la versión de Cargo.toml todavía no tiene release, se crea una (etiqueta vX.Y.Z)
-# con los programas empaquetados. Para sacar una versión nueva basta con subir el número
-# de `version` en Cargo.toml.
+# En cada subida a main se compila y se prueba en Linux, Windows y macOS y se publica una release
+# con los programas empaquetados, poniéndole la etiqueta automáticamente:
+#   · vX.Y.Z      si esa versión de Cargo.toml todavía no tiene release,
+#   · vX.Y.Z-N    si ya la tiene (N es el número de ejecución), para que cada subida tenga la suya.
+# No hace falta crear etiquetas a mano.
 #
 # Para forzar una compilación a mano: pestaña Actions › «Compilar y publicar» › Run workflow.
-# Ahí se puede marcar «Sustituir los archivos de la release de esta versión» para que, aunque
-# la release ya exista, se vuelvan a subir los programas recién compilados.
+# Ahí se puede marcar «Sustituir los archivos de la release de esta versión» para volver a subir
+# los programas a la release vX.Y.Z aunque ya exista, en lugar de crear una etiqueta nueva.
 on:
   push:
     branches: [main]
@@ -98,22 +99,23 @@ jobs:
         with:
           path: artefactos
           merge-multiple: true
-      - name: Crear la release si la versión es nueva
+      - name: Etiquetar y publicar la release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REEMPLAZAR: ${{ github.event.inputs.reemplazar }}
         run: |
           VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
           TAG="v$VERSION"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            if [ "${{ github.event.inputs.reemplazar }}" = "true" ]; then
+            if [ "$REEMPLAZAR" = "true" ]; then
               echo "La release $TAG ya existe: se sustituyen sus archivos."
               gh release upload "$TAG" artefactos/* --clobber
-            else
-              echo "La release $TAG ya existe; no se crea otra."
+              exit 0
             fi
-            exit 0
+            TAG="v$VERSION-$GITHUB_RUN_NUMBER"
           fi
+          echo "Publicando $TAG"
           gh release create "$TAG" artefactos/* \
             --target "$GITHUB_SHA" \
-            --title "Ficherón $VERSION" \
+            --title "Ficherón $TAG" \
             --generate-notes

@@ -52,8 +52,10 @@ Marcando «Sustituir los archivos de la release de esta versión» se vuelven a 
 Desde la terminal: `./packaging/forzar-compilacion.sh` (con `--reemplazar` para sustituir la release; usa la CLI `gh` si está instalada y, si no, sube un commit vacío).
 
 Cada subida a `main` compila y prueba el programa en Linux, Windows y macOS (Intel y Apple Silicon).
-Si el número de `version` de `Cargo.toml` aún no tiene release, se crea una (`vX.Y.Z`) con los paquetes
-para las tres plataformas. Para publicar una versión nueva, sube ese número y haz push.
+Después publica una release con los paquetes para las tres plataformas y le pone la etiqueta sola:
+`vX.Y.Z` si esa versión de `Cargo.toml` aún no tiene release, y `vX.Y.Z-N` (N = número de ejecución)
+si ya la tiene. No hace falta crear etiquetas a mano; para una versión «oficial» nueva, sube el número
+de `version` y haz push.
 
 ## Licencia
 
