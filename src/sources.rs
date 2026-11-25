@@ -24,6 +24,8 @@ pub struct Sources {
     picker: Option<Picker>,
     pub recursive: bool,
     pub hidden: bool,
+    /// Name filters are regular expressions instead of wildcards.
+    pub regex: bool,
     pub include: String,
     pub exclude: String,
     pub exclude_dirs: String,
@@ -37,6 +39,7 @@ impl Sources {
             picker: None,
             recursive: true,
             hidden: false,
+            regex: false,
             include: String::new(),
             exclude: String::new(),
             exclude_dirs: ".git; node_modules; .cache; $RECYCLE.BIN".into(),
@@ -52,7 +55,7 @@ impl Sources {
     }
 
     pub fn filters(&self) -> Result<Filters, String> {
-        let m = |t: &str| crate::rename::name_matcher(t, false).map_err(|e| trf!("Expresión no válida: {}", e));
+        let m = |t: &str| crate::rename::name_matcher(t, self.regex).map_err(|e| trf!("Expresión no válida: {}", e));
         Ok(Filters { include: m(&self.include)?, exclude: m(&self.exclude)?, exclude_dirs: m(&self.exclude_dirs)? })
     }
 
@@ -104,13 +107,14 @@ impl Sources {
             ui.separator();
             ui.checkbox(&mut self.recursive, tr("Incluir subcarpetas"));
             ui.checkbox(&mut self.hidden, tr("Incluir ocultos"));
+            ui.checkbox(&mut self.regex, tr("Expresiones regulares")).on_hover_text(tr("Los filtros de nombre se leen como expresiones regulares (sin distinguir mayúsculas), p. ej. \\.(jpg|png)$ o ^IMG_\\d+"));
         });
         egui::Grid::new((self.id, "filters")).num_columns(2).spacing([10.0, 4.0]).show(ui, |ui| {
             ui.label(tr("Incluir solo"));
-            ui.add(egui::TextEdit::singleline(&mut self.include).hint_text("*.jpg; *.png").desired_width(f32::INFINITY)).on_hover_text(tr("Patrones de nombre separados por «;», con * y ?. Vacío = todos. Solo afecta a los archivos de las carpetas."));
+            ui.add(egui::TextEdit::singleline(&mut self.include).hint_text(if self.regex { "\\.(jpg|png)$" } else { "*.jpg; *.png" }).desired_width(f32::INFINITY)).on_hover_text(tr("Patrones de nombre separados por «;», con * y ?. Vacío = todos. Solo afecta a los archivos de las carpetas."));
             ui.end_row();
             ui.label(tr("Excluir"));
-            ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text("*.tmp; *.log").desired_width(f32::INFINITY));
+            ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text(if self.regex { "\\.(tmp|log)$" } else { "*.tmp; *.log" }).desired_width(f32::INFINITY));
             ui.end_row();
             ui.label(tr("Saltar carpetas"));
             ui.add(egui::TextEdit::singleline(&mut self.exclude_dirs).desired_width(f32::INFINITY));
@@ -189,6 +193,19 @@ mod tests {
         assert_eq!(names(&s), ["a.txt", "b.log"], "no subfolders");
         s.hidden = true;
         assert!(names(&s).contains(&".oculto.txt".to_string()));
+        // The same filters as regular expressions.
+        s.regex = true;
+        s.recursive = true;
+        s.hidden = false;
+        s.include = r"^[ab]\.(txt|log)$".into();
+        s.exclude = r"^b\.".into();
+        assert_eq!(names(&s), ["a.txt"]);
+        assert!(s.filters().is_ok());
+        s.include = "(".into();
+        assert!(s.filters().is_err(), "a broken expression is reported");
+        s.regex = false;
+        s.include.clear();
+        s.exclude.clear();
         // A file added by hand ignores the filters.
         s.exclude = "*.log".into();
         s.add([d.join("b.log")]);

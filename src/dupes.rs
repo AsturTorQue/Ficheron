@@ -214,7 +214,7 @@ impl Dupes {
             min_age_secs: self.min_age_days as u64 * 86_400,
             include: m(&self.include)?,
             exclude: m(&self.exclude)?,
-            exclude_dirs: crate::rename::name_matcher(&self.exclude_dirs, false).map_err(|e| trf!("Expresión no válida: {}", e))?,
+            exclude_dirs: crate::rename::name_matcher(&self.exclude_dirs, self.pat_regex).map_err(|e| trf!("Expresión no válida: {}", e))?,
             skip_hidden: self.skip_hidden,
             skip_empty: self.skip_empty,
             hardlinks_as_one: self.hardlinks_as_one,
@@ -984,32 +984,39 @@ pub(crate) fn quick_places() -> Vec<(String, PathBuf)> {
             v.push((format!("{icon} {name}"), p));
         }
     }
+    v.extend(drive_list().into_iter().map(|(icon, name, p)| (format!("{icon} {name}"), p)));
+    v
+}
+
+/// Every drive or mounted disk, for the «Mi equipo» view: (icon, name, path).
+pub(crate) fn drive_list() -> Vec<(&'static str, String, PathBuf)> {
+    let mut v: Vec<(&'static str, String, PathBuf)> = vec![];
     #[cfg(unix)]
     {
-        v.push((format!("🖴 {}", tr("Sistema de archivos")), PathBuf::from("/")));
+        v.push(("🖴", tr("Sistema de archivos").to_string(), PathBuf::from("/")));
         for m in ["/media", "/mnt", "/run/media", "/Volumes"] {
             if let Ok(rd) = fs::read_dir(m) {
-                for d in rd.flatten().take(8) {
+                for d in rd.flatten().take(16) {
                     let p = d.path();
                     // /run/media/<user>/<disk>
                     if m == "/run/media" {
                         if let Ok(inner) = fs::read_dir(&p) {
-                            for d2 in inner.flatten().take(8) {
-                                v.push((format!("💽 {}", d2.file_name().to_string_lossy()), d2.path()));
+                            for d2 in inner.flatten().take(16) {
+                                v.push(("💽", d2.file_name().to_string_lossy().to_string(), d2.path()));
                             }
                         }
                     } else if p.is_dir() {
-                        v.push((format!("💽 {}", d.file_name().to_string_lossy()), p));
+                        v.push(("💽", d.file_name().to_string_lossy().to_string(), p));
                     }
                 }
             }
         }
     }
     #[cfg(windows)]
-    for l in b'C'..=b'Z' {
+    for l in b'A'..=b'Z' {
         let p = PathBuf::from(format!("{}:\\", l as char));
         if p.exists() {
-            v.push((format!("🖴 {}", trf!("Disco ({}:)", l as char)), p));
+            v.push(("🖴", trf!("Disco ({}:)", l as char), p));
         }
     }
     v
@@ -1039,6 +1046,13 @@ impl Browser {
     }
 
     pub(crate) fn go(&mut self, p: PathBuf) {
+        // An empty path is «Mi equipo»: the drives, one level above every drive root.
+        if p.as_os_str().is_empty() {
+            self.entries = drive_list().into_iter().map(|(_, n, p)| (n, p)).collect();
+            self.input = tr("Mi equipo").to_string();
+            self.path = PathBuf::new();
+            return;
+        }
         let p = crate::fsops::canonical(&p);
         let mut entries: Vec<(String, PathBuf)> = fs::read_dir(&p)
             .map(|rd| {

@@ -158,6 +158,7 @@ pub struct EmptyDirs {
     junk: String,
     protect: String,
     hidden_is_junk: bool,
+    regex: bool,
     permanent: bool,
     confirm: bool,
     found: Vec<Found>,
@@ -179,6 +180,7 @@ impl EmptyDirs {
             junk: "Thumbs.db; desktop.ini; .DS_Store; ._*".into(),
             protect: ".git; .svn; node_modules".into(),
             hidden_is_junk: false,
+            regex: false,
             permanent: false,
             confirm: false,
             found: vec![],
@@ -198,7 +200,7 @@ impl EmptyDirs {
     }
 
     fn cfg(&self) -> Result<Cfg, String> {
-        let m = |t: &str| crate::rename::name_matcher(t, false).map_err(|e| trf!("Expresión no válida: {}", e));
+        let m = |t: &str| crate::rename::name_matcher(t, self.regex).map_err(|e| trf!("Expresión no válida: {}", e));
         Ok(Cfg { recursive: self.recursive, include_root: self.include_root, junk: m(&self.junk)?, protect: m(&self.protect)?, hidden_is_junk: self.hidden_is_junk })
     }
 
@@ -282,6 +284,7 @@ impl EmptyDirs {
                 ui.checkbox(&mut self.recursive, tr("Incluir subcarpetas")).on_hover_text(tr("Si no, solo se miran las carpetas que están directamente dentro de las elegidas."));
                 ui.checkbox(&mut self.include_root, tr("Incluir también la carpeta elegida si queda vacía"));
                 ui.checkbox(&mut self.hidden_is_junk, tr("Los archivos ocultos cuentan como basura"));
+                ui.checkbox(&mut self.regex, tr("Expresiones regulares")).on_hover_text(tr("Los patrones de «Cuentan como vacío» y «Carpetas protegidas» se leen como expresiones regulares sobre el nombre (sin distinguir mayúsculas)."));
             });
             egui::Grid::new("emptydirs_grid").num_columns(2).spacing([10.0, 4.0]).show(ui, |ui| {
                 ui.label(tr("Cuentan como vacío"));

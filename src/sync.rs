@@ -271,7 +271,7 @@ fn filt(o: &Opts) -> Result<Filt, String> {
     Ok(Filt {
         include: m(&o.include)?,
         exclude: m(&o.exclude)?,
-        exclude_dirs: crate::rename::name_matcher(&o.exclude_dirs, false).map_err(|e| trf!("Expresión no válida: {}", e))?,
+        exclude_dirs: crate::rename::name_matcher(&o.exclude_dirs, o.pat_regex).map_err(|e| trf!("Expresión no válida: {}", e))?,
         skip_hidden: o.skip_hidden,
         min: parse_size(&o.min_text).map_err(|e| format!("{}: {e}", tr("Tamaño mínimo")))?.unwrap_or(0),
         max: parse_size(&o.max_text).map_err(|e| format!("{}: {e}", tr("Tamaño máximo")))?.unwrap_or(u64::MAX),

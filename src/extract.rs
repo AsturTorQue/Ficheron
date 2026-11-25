@@ -415,6 +415,7 @@ pub struct Extractor {
     password: String,
     show_pw: bool,
     filter: String,
+    filter_regex: bool,
     keep_dates: bool,
     delete_orig: bool,
     confirm_delete: bool,
@@ -441,6 +442,7 @@ impl Extractor {
             password: String::new(),
             show_pw: false,
             filter: String::new(),
+            filter_regex: false,
             keep_dates: true,
             delete_orig: false,
             confirm_delete: false,
@@ -477,7 +479,7 @@ impl Extractor {
         if self.dest_other && self.dest.text.trim().is_empty() {
             return Err(tr("Elige la carpeta de destino.").to_string());
         }
-        crate::rename::name_matcher(&self.filter, false).map_err(|e| trf!("Expresión no válida: {}", e))?;
+        crate::rename::name_matcher(&self.filter, self.filter_regex).map_err(|e| trf!("Expresión no válida: {}", e))?;
         if self.delete_orig && !self.confirm_delete {
             return Err(tr("Marca la casilla para confirmar que se envíen los paquetes a la papelera.").to_string());
         }
@@ -494,7 +496,7 @@ impl Extractor {
             folder_mode: self.folder_mode,
             conflict: self.conflict,
             password: self.password.clone(),
-            filter: crate::rename::name_matcher(&self.filter, false).ok().flatten(),
+            filter: crate::rename::name_matcher(&self.filter, self.filter_regex).ok().flatten(),
             verify_mtime: self.keep_dates,
         };
         let items = self.items.clone();
@@ -683,7 +685,8 @@ impl Extractor {
             });
             ui.horizontal(|ui| {
                 ui.add_sized([100.0, 18.0], egui::Label::new(tr("Solo extraer")));
-                ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text("*.jpg; *.png").desired_width(260.0)).on_hover_text(tr("Solo los archivos cuyo nombre coincida (vacío = todo)"));
+                ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text(if self.filter_regex { "\\.(jpg|png)$" } else { "*.jpg; *.png" }).desired_width(260.0)).on_hover_text(tr("Solo los archivos cuyo nombre coincida (vacío = todo)"));
+                ui.checkbox(&mut self.filter_regex, tr("Expresión regular"));
             });
             ui.checkbox(&mut self.keep_dates, tr("Conservar las fechas de modificación"));
             ui.checkbox(&mut self.delete_orig, tr("Enviar los paquetes a la papelera al terminar")).on_hover_text(tr("Solo los que se extrajeron sin errores."));

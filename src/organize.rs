@@ -392,6 +392,7 @@ pub struct Organizer {
     hidden: bool,
     include: String,
     exclude: String,
+    filter_regex: bool,
     dest_other: bool,
     dest: DestField,
     copy: bool,
@@ -421,6 +422,7 @@ impl Organizer {
             hidden: false,
             include: String::new(),
             exclude: String::new(),
+            filter_regex: false,
             dest_other: false,
             dest: DestField::new("organize_dest"),
             copy: false,
@@ -446,8 +448,8 @@ impl Organizer {
 
     fn sig(&self) -> String {
         format!(
-            "{:?}|{}|{}|{}|{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-            self.roots.roots, self.mode, self.date_src, self.date_tpl, self.rules, self.other, self.recursive, self.hidden, self.include, self.exclude, self.dest_other, self.dest.text, self.copy, self.conflict, self.clean_empty
+            "{:?}|{}|{}|{}|{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            self.roots.roots, self.mode, self.date_src, self.date_tpl, self.rules, self.other, self.recursive, self.hidden, self.include, self.exclude, self.filter_regex, self.dest_other, self.dest.text, self.copy, self.conflict, self.clean_empty
         )
     }
 
@@ -455,7 +457,7 @@ impl Organizer {
         if self.roots.roots.is_empty() {
             return Err(tr("Añade al menos una carpeta que organizar.").to_string());
         }
-        let m = |t: &str| crate::rename::name_matcher(t, false).map_err(|e| trf!("Expresión no válida: {}", e));
+        let m = |t: &str| crate::rename::name_matcher(t, self.filter_regex).map_err(|e| trf!("Expresión no válida: {}", e));
         let mut rules = vec![];
         if self.mode == 5 {
             for (pat, folder) in &self.rules {
@@ -675,13 +677,14 @@ impl Organizer {
         egui::CollapsingHeader::new(tr("🔎 Qué incluir")).default_open(false).show(ui, |ui| {
             ui.checkbox(&mut self.recursive, tr("Incluir los archivos de las subcarpetas")).on_hover_text(tr("Se sacan de sus subcarpetas y se reparten en las carpetas nuevas."));
             ui.checkbox(&mut self.hidden, tr("Incluir archivos ocultos"));
+            ui.checkbox(&mut self.filter_regex, tr("Expresiones regulares")).on_hover_text(tr("Los patrones de «Solo», «Excluir» y de las reglas propias se leen como expresiones regulares sobre el nombre (sin distinguir mayúsculas)."));
             ui.horizontal(|ui| {
                 ui.add_sized([100.0, 18.0], egui::Label::new(tr("Solo")));
-                ui.add(egui::TextEdit::singleline(&mut self.include).hint_text("*.jpg; *.png").desired_width(260.0));
+                ui.add(egui::TextEdit::singleline(&mut self.include).hint_text(if self.filter_regex { "\\.(jpg|png)$" } else { "*.jpg; *.png" }).desired_width(260.0));
             });
             ui.horizontal(|ui| {
                 ui.add_sized([100.0, 18.0], egui::Label::new(tr("Excluir")));
-                ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text("*.tmp; importante*").desired_width(260.0));
+                ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text(if self.filter_regex { "\\.tmp$|^importante" } else { "*.tmp; importante*" }).desired_width(260.0));
             });
             ui.checkbox(&mut self.clean_empty, tr("Quitar las subcarpetas que queden vacías")).on_hover_text(tr("Solo al mover archivos."));
         });

@@ -372,7 +372,7 @@ impl Purge {
             folders: self.folders && compile(&self.patterns, self.regex, self.on_path, self.case).map(|p| p.is_some()).unwrap_or(false),
             recursive: self.recursive,
             depth: self.depth,
-            skip_dirs: crate::rename::name_matcher(&self.skip_dirs, false).map_err(|e| trf!("Expresión no válida: {}", e))?,
+            skip_dirs: crate::rename::name_matcher(&self.skip_dirs, self.regex).map_err(|e| trf!("Expresión no válida: {}", e))?,
             skip_hidden: self.skip_hidden,
             readonly: self.readonly,
             min: min.unwrap_or(0),

@@ -194,6 +194,7 @@ struct Opts {
     dest: PathBuf,
     conflict: u8,
     include: String,
+    name_regex: bool,
     recursive: bool,
 }
 
@@ -270,7 +271,7 @@ fn is_text_name(name: &str, patterns: &Option<regex::Regex>) -> bool {
 }
 
 fn collect(items: &[PathBuf], o: &Opts) -> Vec<PathBuf> {
-    let pats = crate::rename::name_matcher(&o.include, false).ok().flatten();
+    let pats = crate::rename::name_matcher(&o.include, o.name_regex).ok().flatten();
     let mut out = vec![];
     for p in items {
         if p.is_file() {
@@ -405,6 +406,7 @@ pub struct TextConv {
     dest_other: bool,
     conflict: u8,
     include: String,
+    name_regex: bool,
     recursive: bool,
     job: Option<Job>,
     results: Vec<Res>,
@@ -435,6 +437,7 @@ impl TextConv {
             dest_other: false,
             conflict: 0,
             include: "*.txt; *.md; *.csv; *.json; *.xml; *.html; *.css; *.js; *.ts; *.py; *.rs; *.c; *.h; *.cpp; *.java; *.yml; *.yaml; *.toml; *.ini; *.log; *.sh; *.bat; *.sql".into(),
+            name_regex: false,
             recursive: true,
             job: None,
             results: vec![],
@@ -474,6 +477,7 @@ impl TextConv {
             dest: self.dest.path(),
             conflict: self.conflict,
             include: self.include.clone(),
+            name_regex: self.name_regex,
             recursive: self.recursive,
         }
     }
@@ -487,7 +491,7 @@ impl TextConv {
             self.status = Some((tr("Elige la carpeta de destino.").to_string(), true));
             return;
         }
-        if let Err(e) = crate::rename::name_matcher(&self.include, false) {
+        if let Err(e) = crate::rename::name_matcher(&self.include, self.name_regex) {
             self.status = Some((trf!("Expresión no válida: {}", e), true));
             return;
         }
@@ -590,6 +594,7 @@ impl TextConv {
                 self.items.clear();
             }
             ui.checkbox(&mut self.recursive, tr("Incluir subcarpetas"));
+            ui.checkbox(&mut self.name_regex, tr("Expresiones regulares")).on_hover_text(tr("El filtro de nombres se lee como expresión regular (sin distinguir mayúsculas), p. ej. \\.(txt|md)$"));
         });
         ui.horizontal(|ui| {
             ui.add_sized([150.0, 18.0], egui::Label::new(tr("De las carpetas, solo")));
@@ -733,7 +738,7 @@ mod tests {
     use super::*;
 
     fn opts() -> Opts {
-        Opts { from: None, to: None, eol: 0, tabs: 0, tab_width: 4, trim: false, blank_max: 0, final_nl: 0, backup: false, dest_other: false, dest: PathBuf::new(), conflict: 0, include: String::new(), recursive: true }
+        Opts { from: None, to: None, eol: 0, tabs: 0, tab_width: 4, trim: false, blank_max: 0, final_nl: 0, backup: false, dest_other: false, dest: PathBuf::new(), conflict: 0, include: String::new(), name_regex: false, recursive: true }
     }
 
     #[test]

@@ -206,6 +206,7 @@ pub struct Searcher {
     include: String,
     exclude: String,
     exclude_dirs: String,
+    name_regex: bool,
     recursive: bool,
     hidden: bool,
     max_mb: u32,
@@ -238,6 +239,7 @@ impl Searcher {
             include: String::new(),
             exclude: String::new(),
             exclude_dirs: ".git; node_modules; target; .cache".into(),
+            name_regex: false,
             recursive: true,
             hidden: false,
             max_mb: 20,
@@ -278,7 +280,7 @@ impl Searcher {
             pat = format!(r"\b(?:{pat})\b");
         }
         let re = RegexBuilder::new(&pat).case_insensitive(!self.case).build().map_err(|e| trf!("Expresión no válida: {}", e.to_string().lines().last().unwrap_or("").trim()))?;
-        let m = |t: &str| crate::rename::name_matcher(t, false).map_err(|e| trf!("Expresión no válida: {}", e));
+        let m = |t: &str| crate::rename::name_matcher(t, self.name_regex).map_err(|e| trf!("Expresión no válida: {}", e));
         Ok(Cfg { re, include: m(&self.include)?, exclude: m(&self.exclude)?, exclude_dirs: m(&self.exclude_dirs)?, hidden: self.hidden, recursive: self.recursive, max_bytes: self.max_mb as u64 * 1024 * 1024, skip_binary: self.skip_binary })
     }
 
@@ -379,10 +381,10 @@ impl Searcher {
         ui.add_space(2.0);
         egui::Grid::new("grep_filters").num_columns(2).spacing([10.0, 4.0]).show(ui, |ui| {
             ui.label(tr("Incluir solo"));
-            ui.add(egui::TextEdit::singleline(&mut self.include).hint_text("*.txt; *.md; *.rs").desired_width(f32::INFINITY)).on_hover_text(tr("Patrones de nombre separados por «;», con * y ?. Vacío = todos los archivos."));
+            ui.add(egui::TextEdit::singleline(&mut self.include).hint_text(if self.name_regex { "\\.(txt|md|rs)$" } else { "*.txt; *.md; *.rs" }).desired_width(f32::INFINITY)).on_hover_text(tr("Patrones de nombre separados por «;», con * y ?. Vacío = todos los archivos."));
             ui.end_row();
             ui.label(tr("Excluir"));
-            ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text("*.min.js; *.log").desired_width(f32::INFINITY));
+            ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text(if self.name_regex { "\\.min\\.js$|\\.log$" } else { "*.min.js; *.log" }).desired_width(f32::INFINITY));
             ui.end_row();
             ui.label(tr("Saltar carpetas"));
             ui.add(egui::TextEdit::singleline(&mut self.exclude_dirs).desired_width(f32::INFINITY));
@@ -392,6 +394,7 @@ impl Searcher {
             ui.checkbox(&mut self.recursive, tr("Incluir subcarpetas"));
             ui.checkbox(&mut self.hidden, tr("Incluir ocultos"));
             ui.checkbox(&mut self.skip_binary, tr("Saltar binarios"));
+            ui.checkbox(&mut self.name_regex, tr("Filtros con expresiones regulares")).on_hover_text(tr("Incluir, excluir y carpetas a saltar se leen como expresiones regulares sobre el nombre (sin distinguir mayúsculas)."));
             ui.label(tr("Tamaño máximo"));
             ui.add(egui::DragValue::new(&mut self.max_mb).range(1..=2048).suffix(" MB")).on_hover_text(tr("Los archivos más grandes no se leen"));
         });

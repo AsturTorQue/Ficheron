@@ -19,15 +19,20 @@ pub fn folder_window(ctx: &egui::Context, id: &str, slot: &mut Option<Browser>, 
     let mut close = false;
     egui::Window::new(tr("Elegir carpeta")).id(egui::Id::new(("folder_window", id))).open(&mut open).default_width(480.0).default_height(440.0).show(ctx, |ui| {
         ui.horizontal(|ui| {
-            if ui.add_enabled(b.path.parent().is_some(), egui::Button::new("⬆")).on_hover_text(tr("Carpeta superior")).clicked() {
-                nav = b.path.parent().map(Path::to_path_buf);
+            // From a drive's root (or «/») one level up is «Mi equipo», where all the drives are.
+            if ui.add_enabled(!b.path.as_os_str().is_empty(), egui::Button::new("⬆")).on_hover_text(tr("Carpeta superior")).clicked() {
+                nav = Some(b.path.parent().map(Path::to_path_buf).unwrap_or_default());
             }
             if ui.button("🏠").on_hover_text(tr("Carpeta personal")).clicked() {
                 nav = dirs::home_dir();
             }
+            if ui.button("💻").on_hover_text(tr("Mi equipo: todas las unidades")).clicked() {
+                nav = Some(PathBuf::new());
+            }
             let r = ui.add(egui::TextEdit::singleline(&mut b.input).desired_width(ui.available_width() - 4.0));
             if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                nav = Some(PathBuf::from(b.input.trim()));
+                let t = b.input.trim();
+                nav = Some(if t.is_empty() || t == tr("Mi equipo") { PathBuf::new() } else { PathBuf::from(t) });
             }
         });
         ui.horizontal_wrapped(|ui| {
@@ -58,7 +63,7 @@ pub fn folder_window(ctx: &egui::Context, id: &str, slot: &mut Option<Browser>, 
         ui.separator();
         ui.horizontal(|ui| {
             let name = b.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| b.path.to_string_lossy().to_string());
-            if ui.button(trf!("✔ Usar «{}»", name)).on_hover_text(b.path.to_string_lossy()).clicked() {
+            if ui.add_enabled(!b.path.as_os_str().is_empty(), egui::Button::new(trf!("✔ Usar «{}»", name))).on_hover_text(b.path.to_string_lossy()).clicked() {
                 picks.push(b.path.clone());
             }
             if ui.button(tr("Cerrar")).clicked() {
@@ -66,7 +71,7 @@ pub fn folder_window(ctx: &egui::Context, id: &str, slot: &mut Option<Browser>, 
             }
         });
     });
-    if let Some(p) = nav.filter(|p| p.is_dir()) {
+    if let Some(p) = nav.filter(|p| p.as_os_str().is_empty() || p.is_dir()) {
         b.go(p);
     }
     if open && !close && (keep_open || picks.is_empty()) {
@@ -208,6 +213,13 @@ impl Picker {
     }
 
     pub fn go(&mut self, p: PathBuf) {
+        // An empty path is «Mi equipo»: every drive, above all the drive roots.
+        if p.as_os_str().is_empty() {
+            self.entries = crate::dupes::drive_list().into_iter().map(|(_, n, p)| (n, p, true)).collect();
+            self.input = tr("Mi equipo").to_string();
+            self.path = PathBuf::new();
+            return;
+        }
         let p = crate::fsops::canonical(&p);
         let mut entries: Vec<(String, PathBuf, bool)> = fs::read_dir(&p)
             .map(|rd| rd.flatten().map(|e| (e.file_name().to_string_lossy().to_string(), e.path(), e.file_type().map(|t| t.is_dir()).unwrap_or(false))).collect())
@@ -229,15 +241,19 @@ pub fn picker_window(ctx: &egui::Context, id: &str, slot: &mut Option<Picker>) -
     let mut close = false;
     egui::Window::new(tr("Elegir archivos y carpetas")).id(egui::Id::new(("picker_window", id))).open(&mut open).default_width(520.0).default_height(480.0).show(ctx, |ui| {
         ui.horizontal(|ui| {
-            if ui.add_enabled(pk.path.parent().is_some(), egui::Button::new("⬆")).on_hover_text(tr("Carpeta superior")).clicked() {
-                nav = pk.path.parent().map(Path::to_path_buf);
+            if ui.add_enabled(!pk.path.as_os_str().is_empty(), egui::Button::new("⬆")).on_hover_text(tr("Carpeta superior")).clicked() {
+                nav = Some(pk.path.parent().map(Path::to_path_buf).unwrap_or_default());
             }
             if ui.button("🏠").on_hover_text(tr("Carpeta personal")).clicked() {
                 nav = dirs::home_dir();
             }
-            let r = ui.add(egui::TextEdit::singleline(&mut pk.input).desired_width(ui.available_width() - 90.0));
+            if ui.button("💻").on_hover_text(tr("Mi equipo: todas las unidades")).clicked() {
+                nav = Some(PathBuf::new());
+            }
+            let r = ui.add(egui::TextEdit::singleline(&mut pk.input).desired_width(ui.available_width() - 130.0));
             if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                nav = Some(PathBuf::from(pk.input.trim()));
+                let t = pk.input.trim();
+                nav = Some(if t.is_empty() || t == tr("Mi equipo") { PathBuf::new() } else { PathBuf::from(t) });
             }
             if ui.checkbox(&mut pk.hidden, tr("ocultos")).changed() {
                 nav = Some(pk.path.clone());
@@ -285,7 +301,7 @@ pub fn picker_window(ctx: &egui::Context, id: &str, slot: &mut Option<Picker>) -
             }
         });
     });
-    if let Some(p) = nav.filter(|p| p.is_dir()) {
+    if let Some(p) = nav.filter(|p| p.as_os_str().is_empty() || p.is_dir()) {
         pk.go(p);
     }
     let mut out = vec![];
@@ -297,4 +313,27 @@ pub fn picker_window(ctx: &egui::Context, id: &str, slot: &mut Option<Picker>) -
         *slot = Some(pk);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_path_is_my_computer_with_the_drives() {
+        let b = Browser::new(PathBuf::new(), 0);
+        assert!(b.path.as_os_str().is_empty() && !b.entries.is_empty(), "the drives are listed");
+        #[cfg(unix)]
+        assert!(b.entries.iter().any(|(_, p)| p == Path::new("/")), "the root filesystem is a drive on Unix");
+        let pk = Picker::new(PathBuf::new());
+        assert!(pk.path.as_os_str().is_empty() && pk.entries.iter().all(|e| e.2), "every entry is a folder");
+        // Going up from the top of a drive reaches «Mi equipo»; from there, into a drive.
+        let mut b = Browser::new(PathBuf::from("/"), 0);
+        assert_eq!(b.path.parent(), None);
+        b.go(b.path.parent().map(Path::to_path_buf).unwrap_or_default());
+        assert!(b.path.as_os_str().is_empty());
+        let first = b.entries[0].1.clone();
+        b.go(first.clone());
+        assert_eq!(b.path, crate::fsops::canonical(&first));
+    }
 }
