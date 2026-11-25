@@ -42,8 +42,20 @@ impl Row {
     }
 }
 
+/// One line of the single-column view.
+#[derive(Clone)]
+enum URow {
+    Equal(usize, String),
+    Del(usize, String, Vec<(usize, usize)>),
+    Ins(usize, String, Vec<(usize, usize)>),
+    Folded(usize),
+}
+
 struct TextResult {
     rows: Vec<Row>,
+    urows: Vec<URow>,
+    ublocks: Vec<usize>,
+    names: (String, String),
     /// Row index where each block of changes starts.
     blocks: Vec<usize>,
     added: usize,
@@ -152,7 +164,29 @@ fn diff_text(a: &str, b: &str, o: Options) -> TextResult {
             in_block = false;
         }
     }
-    TextResult { rows, blocks, added, removed, same }
+    let mut urows = Vec::with_capacity(rows.len() + 8);
+    for r in &rows {
+        match r {
+            Row::Equal(a, _, s) => urows.push(URow::Equal(*a, s.clone())),
+            Row::Del(a, s, rg) => urows.push(URow::Del(*a, s.clone(), rg.clone())),
+            Row::Ins(b, s, rg) => urows.push(URow::Ins(*b, s.clone(), rg.clone())),
+            Row::Change(a, sa, ra, b, sb, rb) => {
+                urows.push(URow::Del(*a, sa.clone(), ra.clone()));
+                urows.push(URow::Ins(*b, sb.clone(), rb.clone()));
+            }
+            Row::Folded(n) => urows.push(URow::Folded(*n)),
+        }
+    }
+    let mut ublocks = vec![];
+    let mut in_block = false;
+    for (i, r) in urows.iter().enumerate() {
+        let change = matches!(r, URow::Del(..) | URow::Ins(..));
+        if change && !in_block {
+            ublocks.push(i);
+        }
+        in_block = change;
+    }
+    TextResult { rows, urows, ublocks, names: (String::new(), String::new()), blocks, added, removed, same }
 }
 
 fn fold(full: Vec<Row>) -> Vec<Row> {
@@ -260,7 +294,12 @@ fn compare(a: &Path, b: &Path, o: Options) -> Outcome {
     }
     let read = |p: &Path| fs::read(p).map(|b| String::from_utf8_lossy(&b).to_string()).map_err(|e| e.to_string());
     match (read(a), read(b)) {
-        (Ok(x), Ok(y)) => Outcome::Text(diff_text(&x, &y, o)),
+        (Ok(x), Ok(y)) => {
+            let mut t = diff_text(&x, &y, o);
+            let name = |p: &Path| format!("{} · {}", p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), human_size(fs::metadata(p).map(|m| m.len()).unwrap_or(0)));
+            t.names = (name(a), name(b));
+            Outcome::Text(t)
+        }
         (Err(e), _) | (_, Err(e)) => Outcome::Failed(e),
     }
 }
@@ -270,56 +309,74 @@ pub struct Comparer {
     b: String,
     pick: Option<(bool, Picker)>,
     opts: Options,
+    unified: bool,
     outcome: Option<Outcome>,
     rx: Option<Receiver<Outcome>>,
-    current: usize,
     scroll_to: Option<f32>,
+    /// Where the list was scrolled to last frame, in pixels.
+    offset: f32,
+    viewport_h: f32,
     base: PathBuf,
 }
+
+const ROW_H: f32 = 22.0;
 
 impl Comparer {
     pub fn new(targets: Vec<PathBuf>, base: PathBuf) -> Comparer {
         let files: Vec<&PathBuf> = targets.iter().filter(|p| p.is_file()).collect();
-        Comparer {
+        let mut c = Comparer {
             a: files.first().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
             b: files.get(1).map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
             pick: None,
             opts: Options { ignore_ws: false, ignore_case: false, show_all: false },
+            unified: false,
             outcome: None,
             rx: None,
-            current: 0,
             scroll_to: None,
+            offset: 0.0,
+            viewport_h: 400.0,
             base,
+        };
+        // Two files selected in the main window: compare them right away.
+        if files.len() >= 2 {
+            c.start();
         }
+        c
     }
 
     /// Compares two small files at once, for trying the tool (`--compare`).
     pub fn demo(&mut self, dir: &Path) {
         let (a, b) = (dir.join("comparar_a.txt"), dir.join("comparar_b.txt"));
-        let _ = fs::write(&a, "uno\ndos\ntres\ncuatro\ncinco\nseis\nsiete\nocho\nnueve\ndiez\nonce\ndoce\n");
-        let _ = fs::write(&b, "uno\ndos\ntres modificado\ncuatro\ncinco\nseis\nsiete\nocho\nnueve\nnuevo renglón\ndiez\nonce\n");
+        let sample: String = (1..=60).map(|i| format!("línea {i} del documento\n")).collect();
+        let _ = fs::write(&a, &sample);
+        let _ = fs::write(&b, sample.replace("línea 5 del", "línea 5 de este").replace("línea 31 del documento\n", "").replace("línea 48 del documento\n", "línea 48 del documento\nuna línea nueva\n"));
         self.a = a.to_string_lossy().to_string();
         self.b = b.to_string_lossy().to_string();
         self.start();
     }
 
     fn start(&mut self) {
+        if self.a.trim().is_empty() || self.b.trim().is_empty() {
+            return;
+        }
         let (a, b, o) = (PathBuf::from(self.a.trim()), PathBuf::from(self.b.trim()), self.opts);
         let (tx, rx) = channel();
         std::thread::spawn(move || {
             let _ = tx.send(compare(&a, &b, o));
         });
-        self.outcome = None;
-        self.current = 0;
+        self.scroll_to = Some(0.0);
         self.rx = Some(rx);
     }
 
-    fn path_row(&mut self, ui: &mut egui::Ui, left: bool) {
-        let label = if left { tr("Archivo A") } else { tr("Archivo B") };
+    fn path_row(&mut self, ui: &mut egui::Ui, left: bool, enter: &mut bool) {
         ui.horizontal(|ui| {
-            ui.add_sized([80.0, 20.0], egui::Label::new(label));
+            ui.add_sized([22.0, 22.0], egui::Label::new(RichText::new(if left { "A" } else { "B" }).strong().color(if left { Color32::from_rgb(210, 70, 60) } else { Color32::from_rgb(50, 160, 90) })));
+            let w = (ui.available_width() - 190.0).max(120.0);
             let text = if left { &mut self.a } else { &mut self.b };
-            ui.add(egui::TextEdit::singleline(text).desired_width(ui.available_width() - 120.0));
+            let r = ui.add(egui::TextEdit::singleline(text).hint_text(tr("ruta del archivo")).desired_width(w));
+            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                *enter = true;
+            }
             if ui.button(tr("📂 Examinar…")).clicked() {
                 let cur = if left { &self.a } else { &self.b };
                 let start = Path::new(cur.trim()).parent().filter(|p| p.is_dir()).map(Path::to_path_buf).unwrap_or_else(|| self.base.clone());
@@ -336,51 +393,75 @@ impl Comparer {
             }
         }
         let busy = self.rx.is_some();
-        ui.label(RichText::new(tr("ARCHIVOS A COMPARAR")).small().strong().color(theme::p().sub));
-        self.path_row(ui, true);
-        self.path_row(ui, false);
+        let ctx = ui.ctx().clone();
+        // Files dropped on the window go to A, then B.
+        let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).filter(|p| p.is_file()).collect());
+        let mut go = false;
+        for p in dropped {
+            if self.a.trim().is_empty() || !self.b.trim().is_empty() && self.a.trim() != p.to_string_lossy() && self.b.trim().is_empty() {
+                self.a = p.to_string_lossy().to_string();
+            } else {
+                self.b = p.to_string_lossy().to_string();
+                go = true;
+            }
+        }
+        // Compact header: both files, then the options and the buttons on one row.
+        self.path_row(ui, true, &mut go);
+        self.path_row(ui, false, &mut go);
         let files: Vec<&PathBuf> = selection.iter().filter(|p| p.is_file()).collect();
         ui.horizontal_wrapped(|ui| {
-            if ui.add_enabled(files.len() >= 2, egui::Button::new(tr("Usar los dos seleccionados"))).clicked() {
+            let ready = !busy && !self.a.trim().is_empty() && !self.b.trim().is_empty();
+            let btn = egui::Button::new(RichText::new(tr("⚖ Comparar")).color(Color32::WHITE).strong()).fill(theme::accent());
+            if ui.add_enabled(ready, btn).clicked() {
+                go = true;
+            }
+            if ui.button("A ↔ B").on_hover_text(tr("Intercambiar A y B")).clicked() {
+                std::mem::swap(&mut self.a, &mut self.b);
+                go = true;
+            }
+            if ui.add_enabled(files.len() >= 2, egui::Button::new(tr("Usar los seleccionados"))).on_hover_text(tr("Los dos archivos seleccionados en la ventana principal")).clicked() {
                 self.a = files[0].to_string_lossy().to_string();
                 self.b = files[1].to_string_lossy().to_string();
-            }
-            if ui.button(tr("⇄ Intercambiar")).clicked() {
-                std::mem::swap(&mut self.a, &mut self.b);
+                go = true;
             }
             ui.separator();
             let before = self.opts;
             ui.checkbox(&mut self.opts.ignore_ws, tr("Ignorar espacios"));
             ui.checkbox(&mut self.opts.ignore_case, tr("Ignorar mayúsculas"));
-            ui.checkbox(&mut self.opts.show_all, tr("Mostrar también lo igual"));
+            ui.checkbox(&mut self.opts.show_all, tr("Mostrar todo"));
             if before != self.opts && self.outcome.is_some() {
-                self.start();
-            }
-        });
-        ui.horizontal(|ui| {
-            let ready = !busy && !self.a.trim().is_empty() && !self.b.trim().is_empty();
-            let btn = egui::Button::new(RichText::new(tr("⚖ Comparar")).color(Color32::WHITE).strong()).fill(theme::accent());
-            if ui.add_enabled(ready, btn).clicked() {
-                self.start();
+                go = true;
             }
             if busy {
                 ui.spinner();
-                ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
             }
         });
-        let ctx = ui.ctx().clone();
         if let Some((left, pk)) = self.pick.take() {
             let mut slot = Some(pk);
             let picked = picker_window(&ctx, "compare_pick", &mut slot);
             if let Some(f) = picked.iter().find(|p| p.is_file()) {
                 *(if left { &mut self.a } else { &mut self.b }) = f.to_string_lossy().to_string();
                 slot = None;
+                // As soon as both files are chosen, compare.
+                go = !self.a.trim().is_empty() && !self.b.trim().is_empty();
             }
             self.pick = slot.map(|pk| (left, pk));
         }
+        if go && !busy {
+            self.start();
+        }
         ui.separator();
         match self.outcome.take() {
-            None => {}
+            None => {
+                if !busy {
+                    ui.add_space(20.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(RichText::new("⚖").size(40.0).color(theme::p().muted));
+                        ui.label(RichText::new(tr("Elige los dos archivos (o arrástralos aquí) y se comparan al momento.")).color(theme::p().muted));
+                    });
+                }
+            }
             Some(Outcome::Failed(e)) => {
                 ui.label(RichText::new(e.clone()).color(theme::p().danger));
                 self.outcome = Some(Outcome::Failed(e));
@@ -398,7 +479,7 @@ impl Comparer {
 
     fn binary_ui(&self, ui: &mut egui::Ui, b: &BinaryResult) {
         let same = b.hashes.0 == b.hashes.1;
-        ui.label(RichText::new(if same { tr("✔ Los dos archivos son idénticos") } else { tr("✘ Los archivos son distintos") }).strong().color(if same { theme::p().ok } else { theme::p().danger }));
+        ui.label(RichText::new(if same { tr("✔ Los dos archivos son idénticos") } else { tr("✘ Los archivos son distintos") }).strong().size(16.0).color(if same { theme::p().ok } else { theme::p().danger }));
         ui.label(RichText::new(tr("Archivos binarios: se comparan byte a byte.")).small().color(theme::p().muted));
         egui::Grid::new("compare_bin").num_columns(3).spacing([14.0, 4.0]).show(ui, |ui| {
             ui.label("");
@@ -420,68 +501,186 @@ impl Comparer {
     }
 
     fn text_ui(&mut self, ui: &mut egui::Ui, t: &TextResult) {
+        let ctx = ui.ctx().clone();
+        let blocks: &[usize] = if self.unified { &t.ublocks } else { &t.blocks };
+        let total_rows = if self.unified { t.urows.len() } else { t.rows.len() };
+        let top_row = (self.offset / ROW_H).round() as usize;
+        // The block being looked at: the last one that starts at or above the top of the list (+ a margin).
+        let current = blocks.iter().rposition(|&b| b <= top_row + 3).unwrap_or(0);
+        let mut jump: Option<usize> = None;
+        // F3 / Shift+F3 and Alt+Down / Alt+Up walk through the differences.
+        let (next_key, prev_key) = ctx.input_mut(|i| (i.consume_key(egui::Modifiers::NONE, egui::Key::F3) || i.consume_key(egui::Modifiers::ALT, egui::Key::ArrowDown), i.consume_key(egui::Modifiers::SHIFT, egui::Key::F3) || i.consume_key(egui::Modifiers::ALT, egui::Key::ArrowUp)));
         ui.horizontal_wrapped(|ui| {
             if t.same {
-                ui.label(RichText::new(tr("✔ No hay diferencias")).strong().color(theme::p().ok));
+                ui.label(RichText::new(tr("✔ No hay diferencias")).strong().size(16.0).color(theme::p().ok));
             } else {
-                ui.label(RichText::new(trf!("{} bloque(s) de cambios · +{} líneas · −{} líneas", t.blocks.len(), t.added, t.removed)).strong());
-                if ui.small_button(tr("⬆ Anterior")).clicked() && !t.blocks.is_empty() {
-                    self.current = (self.current + t.blocks.len() - 1) % t.blocks.len();
-                    self.scroll_to = Some(t.blocks[self.current] as f32 * 22.0);
+                let n = blocks.len();
+                if ui.button(tr("⬆ Anterior")).on_hover_text("Shift+F3").clicked() || prev_key {
+                    jump = Some(if n > 0 { (current + n - 1) % n } else { 0 });
                 }
-                if ui.small_button(tr("⬇ Siguiente")).clicked() && !t.blocks.is_empty() {
-                    self.current = (self.current + 1) % t.blocks.len();
-                    self.scroll_to = Some(t.blocks[self.current] as f32 * 22.0);
+                if ui.button(tr("⬇ Siguiente")).on_hover_text("F3").clicked() || next_key {
+                    // From the top of the list the first difference is the next one.
+                    let nxt = blocks.iter().position(|&b| b > top_row + 3).unwrap_or(0);
+                    jump = Some(nxt);
                 }
-                if !t.blocks.is_empty() {
-                    ui.label(RichText::new(format!("{}/{}", self.current + 1, t.blocks.len())).small().color(theme::p().sub));
-                }
+                ui.label(RichText::new(format!("{}/{}", current + 1, n)).strong());
+                ui.label(RichText::new(trf!("+{} líneas · −{} líneas", t.added, t.removed)).color(theme::p().sub));
+                ui.separator();
+                ui.selectable_value(&mut self.unified, false, tr("Lado a lado"));
+                ui.selectable_value(&mut self.unified, true, tr("Unificado"));
             }
         });
         if t.same {
             return;
         }
+        if let Some(k) = jump {
+            if let Some(&row) = blocks.get(k) {
+                self.scroll_to = Some((row.saturating_sub(3)) as f32 * ROW_H);
+            }
+        }
+        // Names above each side.
+        let area_h = (ui.available_height() - 6.0).max(160.0);
         let font = FontId::monospace(13.0);
         let (red, green) = (Color32::from_rgba_unmultiplied(220, 70, 60, 40), Color32::from_rgba_unmultiplied(60, 170, 90, 40));
-        let mut area = egui::ScrollArea::both().id_salt("compare_rows").max_height(crate::tools::grow(ui, 380.0)).auto_shrink([false, false]);
+        let (red_s, green_s) = (Color32::from_rgba_unmultiplied(220, 70, 60, 120), Color32::from_rgba_unmultiplied(60, 170, 90, 120));
+        let mini_w = 18.0;
+        // A window inside the main one grows with its content, so give it a ceiling there.
+        let full_w = if ctx.embed_viewports() { ui.available_width().min(1040.0) } else { ui.available_width() };
+        let list_w = full_w - mini_w - 6.0;
+        let half = (list_w / 2.0).max(260.0);
+        if !self.unified {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                for (k, (name, tint)) in [(&t.names.0, Color32::from_rgb(210, 70, 60)), (&t.names.1, Color32::from_rgb(50, 160, 90))].into_iter().enumerate() {
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(half, 20.0), egui::Sense::hover());
+                    ui.painter().rect_filled(rect, 0.0, theme::p().hover);
+                    ui.painter().text(rect.left_center() + egui::vec2(8.0, 0.0), egui::Align2::LEFT_CENTER, format!("{}  {}", if k == 0 { "A" } else { "B" }, name), FontId::proportional(12.5), tint);
+                }
+            });
+        }
+        let mut area = egui::ScrollArea::vertical().id_salt("compare_rows").max_height(area_h - 22.0).auto_shrink([false, false]);
         if let Some(off) = self.scroll_to.take() {
             area = area.vertical_scroll_offset(off);
         }
-        area.show_rows(ui, 22.0, t.rows.len(), |ui, range| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            let half = (ui.available_width() / 2.0).max(300.0);
-            for i in range {
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(half * 2.0, 22.0), egui::Sense::hover());
-                let (l, r) = (egui::Rect::from_min_size(rect.min, egui::vec2(half, 22.0)), egui::Rect::from_min_size(rect.min + egui::vec2(half, 0.0), egui::vec2(half, 22.0)));
-                let side = |ui: &mut egui::Ui, area: egui::Rect, no: Option<usize>, text: &str, ranges: &[(usize, usize)], bg: Option<Color32>, mark: Color32| {
-                    if let Some(bg) = bg {
-                        ui.painter().rect_filled(area, 0.0, bg);
+        let mut out = None;
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.allocate_ui_with_layout(egui::vec2(list_w, area_h - 22.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                out = Some(area.show_rows(ui, ROW_H, total_rows, |ui, range| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    for i in range {
+                        let (rect, resp) = ui.allocate_exact_size(egui::vec2(list_w - 12.0, ROW_H), egui::Sense::hover());
+                        let line = |ui: &mut egui::Ui, area: egui::Rect, no: Option<usize>, text: &str, ranges: &[(usize, usize)], bg: Option<Color32>, mark: Color32, sign: &str| {
+                            if let Some(bg) = bg {
+                                ui.painter().rect_filled(area, 0.0, bg);
+                            }
+                            if let Some(n) = no {
+                                ui.painter().text(egui::pos2(area.left() + 42.0, area.center().y), egui::Align2::RIGHT_CENTER, n.to_string(), FontId::monospace(11.0), theme::p().muted);
+                            }
+                            if !sign.is_empty() {
+                                ui.painter().text(egui::pos2(area.left() + 54.0, area.center().y), egui::Align2::CENTER_CENTER, sign, FontId::monospace(13.0), theme::p().text);
+                            }
+                            let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(egui::pos2(area.left() + 66.0, area.top()), area.right_bottom())).layout(egui::Layout::left_to_right(egui::Align::Center)));
+                            inner.add(egui::Label::new(highlighted(text, ranges, font.clone(), theme::p().text, theme::p().text, mark)).truncate());
+                        };
+                        let mut long: Option<String> = None;
+                        if self.unified {
+                            let u = &t.urows[i];
+                            match u {
+                                URow::Equal(a, s) => line(ui, rect, Some(*a), s, &[], None, Color32::TRANSPARENT, ""),
+                                URow::Del(a, s, rg) => line(ui, rect, Some(*a), s, rg, Some(red), red_s, "−"),
+                                URow::Ins(b, s, rg) => line(ui, rect, Some(*b), s, rg, Some(green), green_s, "+"),
+                                URow::Folded(n) => folded(ui, rect, *n),
+                            }
+                            if let URow::Equal(_, s) | URow::Del(_, s, _) | URow::Ins(_, s, _) = u {
+                                if s.chars().count() > 110 {
+                                    long = Some(s.clone());
+                                }
+                            }
+                        } else {
+                            let (l, r) = (egui::Rect::from_min_size(rect.min, egui::vec2(half, ROW_H)), egui::Rect::from_min_size(rect.min + egui::vec2(half, 0.0), egui::vec2(rect.width() - half, ROW_H)));
+                            match &t.rows[i] {
+                                Row::Equal(a, b, s) => {
+                                    line(ui, l, Some(*a), s, &[], None, Color32::TRANSPARENT, "");
+                                    line(ui, r, Some(*b), s, &[], None, Color32::TRANSPARENT, "");
+                                    if s.chars().count() > 55 {
+                                        long = Some(s.clone());
+                                    }
+                                }
+                                Row::Del(a, s, rg) => {
+                                    line(ui, l, Some(*a), s, rg, Some(red), red_s, "");
+                                    ui.painter().rect_filled(r, 0.0, theme::p().hover.gamma_multiply(0.4));
+                                    long = (s.chars().count() > 55).then(|| s.clone());
+                                }
+                                Row::Ins(b, s, rg) => {
+                                    ui.painter().rect_filled(l, 0.0, theme::p().hover.gamma_multiply(0.4));
+                                    line(ui, r, Some(*b), s, rg, Some(green), green_s, "");
+                                    long = (s.chars().count() > 55).then(|| s.clone());
+                                }
+                                Row::Change(a, sa, ra, b, sb, rb) => {
+                                    line(ui, l, Some(*a), sa, ra, Some(red), red_s, "");
+                                    line(ui, r, Some(*b), sb, rb, Some(green), green_s, "");
+                                    if sa.chars().count() > 55 || sb.chars().count() > 55 {
+                                        long = Some(format!("A: {sa}\nB: {sb}"));
+                                    }
+                                }
+                                Row::Folded(n) => folded(ui, rect, *n),
+                            }
+                            // A thin divider between the two sides.
+                            ui.painter().line_segment([egui::pos2(rect.left() + half, rect.top()), egui::pos2(rect.left() + half, rect.bottom())], egui::Stroke::new(1.0_f32, theme::p().border));
+                        }
+                        if let Some(text) = long {
+                            resp.on_hover_text(text);
+                        }
                     }
-                    if let Some(n) = no {
-                        ui.painter().text(egui::pos2(area.left() + 44.0, area.center().y), egui::Align2::RIGHT_CENTER, n.to_string(), FontId::monospace(11.0), theme::p().muted);
-                    }
-                    let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(egui::pos2(area.left() + 52.0, area.top()), area.right_bottom())).layout(egui::Layout::left_to_right(egui::Align::Center)));
-                    inner.add(egui::Label::new(highlighted(text, ranges, font.clone(), theme::p().text, theme::p().text, mark)).truncate());
-                };
-                match &t.rows[i] {
-                    Row::Equal(a, b, s) => {
-                        side(ui, l, Some(*a), s, &[], None, Color32::TRANSPARENT);
-                        side(ui, r, Some(*b), s, &[], None, Color32::TRANSPARENT);
-                    }
-                    Row::Del(a, s, rg) => side(ui, l, Some(*a), s, rg, Some(red), Color32::from_rgba_unmultiplied(220, 70, 60, 110)),
-                    Row::Ins(b, s, rg) => side(ui, r, Some(*b), s, rg, Some(green), Color32::from_rgba_unmultiplied(60, 170, 90, 110)),
-                    Row::Change(a, sa, ra, b, sb, rb) => {
-                        side(ui, l, Some(*a), sa, ra, Some(red), Color32::from_rgba_unmultiplied(220, 70, 60, 120));
-                        side(ui, r, Some(*b), sb, rb, Some(green), Color32::from_rgba_unmultiplied(60, 170, 90, 120));
-                    }
-                    Row::Folded(n) => {
-                        ui.painter().rect_filled(rect, 0.0, theme::p().hover);
-                        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, trf!("⋯ {} líneas iguales ⋯", n), FontId::proportional(12.0), theme::p().sub);
-                    }
+                }));
+            });
+            // Overview strip: where the differences are in the whole file; click or drag to jump.
+            let (mrect, mresp) = ui.allocate_exact_size(egui::vec2(mini_w, area_h - 22.0), egui::Sense::click_and_drag());
+            ui.painter().rect_filled(mrect, 3.0, theme::p().hover);
+            let n = total_rows.max(1) as f32;
+            let kinds: Vec<(usize, Color32)> = if self.unified {
+                t.urows.iter().enumerate().filter_map(|(i, r)| match r {
+                    URow::Del(..) => Some((i, red_s)),
+                    URow::Ins(..) => Some((i, green_s)),
+                    _ => None,
+                }).collect()
+            } else {
+                t.rows.iter().enumerate().filter_map(|(i, r)| match r {
+                    Row::Del(..) => Some((i, red_s)),
+                    Row::Ins(..) => Some((i, green_s)),
+                    Row::Change(..) => Some((i, Color32::from_rgba_unmultiplied(230, 150, 40, 170))),
+                    _ => None,
+                }).collect()
+            };
+            for (i, c) in kinds {
+                let y = mrect.top() + i as f32 / n * mrect.height();
+                ui.painter().rect_filled(egui::Rect::from_min_size(egui::pos2(mrect.left() + 2.0, y), egui::vec2(mrect.width() - 4.0, 2.5)), 1.0, c);
+            }
+            let (content_h, view_h) = out.as_ref().map(|o| (o.content_size.y, o.inner_rect.height())).unwrap_or((n * ROW_H, 300.0));
+            self.viewport_h = view_h;
+            if content_h > 0.0 {
+                let top = mrect.top() + self.offset / content_h * mrect.height();
+                let h = (view_h / content_h * mrect.height()).clamp(8.0, mrect.height());
+                ui.painter().rect_stroke(egui::Rect::from_min_size(egui::pos2(mrect.left(), top.min(mrect.bottom() - h)), egui::vec2(mrect.width(), h)), 2.0, egui::Stroke::new(1.5_f32, theme::accent()), egui::StrokeKind::Inside);
+            }
+            if mresp.clicked() || mresp.dragged() {
+                if let Some(pos) = mresp.interact_pointer_pos() {
+                    let frac = ((pos.y - mrect.top()) / mrect.height()).clamp(0.0, 1.0);
+                    self.scroll_to = Some((frac * content_h - view_h / 2.0).max(0.0));
                 }
             }
+            mresp.on_hover_text(tr("Mapa de diferencias: haz clic para saltar"));
         });
+        if let Some(o) = &out {
+            self.offset = o.state.offset.y;
+        }
     }
+}
+
+fn folded(ui: &mut egui::Ui, rect: egui::Rect, n: usize) {
+    ui.painter().rect_filled(rect, 0.0, theme::p().hover);
+    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, trf!("⋯ {} líneas iguales ⋯", n), FontId::proportional(12.0), theme::p().sub);
 }
 
 #[cfg(test)]
