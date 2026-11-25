@@ -47,6 +47,10 @@ wgpu = { version = "24", default-features = false, features = ["dx12", "wgsl"] }
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
 
+# eawk (Apache-2.0) only compiled on Unix; this copy adds the two small Windows fixes.
+[patch.crates-io]
+eawk = { path = "vendor/eawk" }
+
 [profile.release]
 opt-level = 2
 

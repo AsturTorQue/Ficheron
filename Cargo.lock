@@ -1217,8 +1217,6 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 [[package]]
 name = "eawk"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbdf6ba68116519d0618553355668ad769b8b5dcf23325b829d8d86cd18b97cd"
 
 [[package]]
 name = "ecolor"

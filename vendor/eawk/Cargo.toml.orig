@@ -1,0 +1,31 @@
+[package]
+name = "eawk"
+version = "0.1.1"
+edition = "2021"
+rust-version = "1.74"
+license = "Apache-2.0"
+description = "An embeddable AWK interpreter: a zero-dependency Rust library for running awk code, and the standalone `eawk` command."
+repository = "https://github.com/awklib/eawk"
+readme = "README.md"
+keywords = ["awk", "interpreter", "text-processing", "embedded"]
+categories = ["compilers", "text-processing", "command-line-utilities"]
+
+# Deliberately empty. An awk you embed in another process should not drag a
+# dependency tree into that process. The POSIX ERE engine is ours (src/regex).
+[dependencies]
+
+[lib]
+name = "eawk"
+path = "src/lib.rs"
+
+[[bin]]
+name = "eawk"
+path = "src/bin/eawk.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+# Note: deliberately *not* `panic = "abort"`. A library that hosts embed in
+# their own process should unwind rather than abort if it ever hits a bug.
+strip = true
