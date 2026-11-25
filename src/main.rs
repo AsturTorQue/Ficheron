@@ -130,7 +130,7 @@ fn main() -> eframe::Result<()> {
         #[cfg(target_os = "macos")]
         if screenshot.is_some() {
             options.event_loop_builder = Some(Box::new(|b| {
-                use eframe::egui_winit::winit::platform::macos::EventLoopBuilderExtMacOS;
+                use winit::platform::macos::EventLoopBuilderExtMacOS;
                 b.with_activate_ignoring_other_apps(false);
             }));
         }
