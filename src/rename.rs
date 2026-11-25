@@ -136,6 +136,31 @@ impl RuleKind {
             RuleKind::Awk { .. } => tr("Script awk (avanzado)"),
         }
     }
+    /// One line under the title: what the rule does, with an example.
+    fn help(&self) -> &'static str {
+        match self {
+            RuleKind::Template { .. } => tr("Escribe el nombre entero con marcadores: «{fecha} {nombre}»."),
+            RuleKind::Replace { .. } => tr("Cambia un texto por otro: «IMG_1234» » «Foto 1234»."),
+            RuleKind::Case { .. } => tr("Pasa a minúsculas, MAYÚSCULAS o Tipo Título."),
+            RuleKind::Insert { .. } => tr("Mete un texto en una posición del nombre."),
+            RuleKind::Remove { .. } => tr("Quita caracteres de una posición: «2024_foto» » «foto»."),
+            RuleKind::Number { .. } => tr("Añade el contador {n} delante o detrás."),
+            RuleKind::Clean { .. } => tr("Arregla espacios, tildes y símbolos raros."),
+            RuleKind::Ext { .. } => tr("Cambia la extensión: «.JPG» » «.jpg»."),
+            RuleKind::PadNumbers { .. } => tr("Pone ceros delante de los números: «foto 2» » «foto 002»."),
+            RuleKind::RemoveBetween { .. } => tr("Quita lo que hay entre dos símbolos: «canción (live)» » «canción»."),
+            RuleKind::Truncate { .. } => tr("Corta los nombres demasiado largos."),
+            RuleKind::Swap { .. } => tr("Da la vuelta a dos partes: «Artista - Canción» » «Canción - Artista»."),
+            RuleKind::Strip { .. } => tr("Quita números del principio o marcas de copia: «foto (1)» » «foto»."),
+            RuleKind::Prefix { .. } => tr("Pone un texto delante: «foto» » «Viaje foto»."),
+            RuleKind::Suffix { .. } => tr("Pone un texto detrás: «foto» » «foto Viaje»."),
+            RuleKind::Counter { .. } => tr("Numera la lista en su orden: «foto» » «01 - foto»."),
+            RuleKind::Accumulate { .. } => tr("Pone el total acumulado (tamaño, duración…) de los anteriores."),
+            RuleKind::Variable { .. } => tr("No cambia el nombre: guarda un valor que pasa al siguiente archivo."),
+            RuleKind::Awk { .. } => tr("Pasa todos los nombres por un script awk, para casos muy especiales."),
+        }
+    }
+
     fn icon(&self) -> &'static str {
         match self {
             RuleKind::Template { .. } => "🏷",
@@ -227,6 +252,8 @@ pub struct Renamer {
     add_mask: String,
     add_folders: bool,
     add_regex: bool,
+    /// Rules whose options are folded away (by position).
+    folded: HashSet<usize>,
     /// The browsers behind «Elegir carpeta…» and «Elegir archivos…».
     folder_browser: Option<crate::dupes::Browser>,
     file_picker: Option<crate::roots::Picker>,
@@ -254,6 +281,7 @@ impl Renamer {
             add_mask: String::new(),
             add_folders: false,
             add_regex: false,
+            folded: HashSet::new(),
             folder_browser: None,
             file_picker: None,
             mark_text: String::new(),
@@ -821,8 +849,8 @@ impl Renamer {
         ui.separator();
         let h = 440.0;
         ui.horizontal_top(|ui| {
-            ui.allocate_ui_with_layout(egui::vec2(390.0, h), egui::Layout::top_down(egui::Align::Min), |ui| {
-                ui.set_min_size(egui::vec2(390.0, h));
+            ui.allocate_ui_with_layout(egui::vec2(470.0, h), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.set_min_size(egui::vec2(470.0, h));
                 self.rules_panel(ui, events);
             });
             ui.add_space(10.0);
@@ -836,16 +864,21 @@ impl Renamer {
     }
 
     fn list_toolbar(&mut self, ui: &mut egui::Ui, selection: &[PathBuf], cwd: &Path) {
+        let row_label = |ui: &mut egui::Ui, t: &str| {
+            crate::checksum::cell(ui, 110.0, 22.0, |ui| ui.label(RichText::new(t).small().strong().color(theme::p().sub)));
+        };
+        // 1. Adding: from the main window, a folder or chosen files.
         ui.horizontal_wrapped(|ui| {
+            row_label(ui, tr("AÑADIR"));
             if ui
-                .add_enabled(!selection.is_empty(), egui::Button::new(trf!("➕ Añadir seleccionados ({})", selection.len())))
+                .add_enabled(!selection.is_empty(), egui::Button::new(trf!("➕ Seleccionados ({})", selection.len())))
                 .on_hover_text(tr("Selecciona archivos en la ventana principal (puedes cambiar de carpeta) y pulsa aquí para sumarlos a la lista."))
                 .clicked()
             {
                 let n = self.add_paths(selection.to_vec());
                 self.status = Some((trf!("{} elemento(s) añadidos", n), false));
             }
-            if ui.button(tr("➕ Añadir carpeta actual")).on_hover_text(cwd.to_string_lossy()).clicked() {
+            if ui.button(tr("➕ Carpeta actual")).on_hover_text(cwd.to_string_lossy()).clicked() {
                 let n = self.add_folder(cwd);
                 self.status = Some((trf!("{} elemento(s) añadidos", n), false));
             }
@@ -856,11 +889,18 @@ impl Renamer {
             if ui.button(tr("📂 Elegir archivos…")).on_hover_text(tr("Examinar y marcar archivos o carpetas concretos")).clicked() {
                 self.file_picker = Some(crate::roots::Picker::new(start));
             }
-            ui.checkbox(&mut self.add_recursive, tr("con subcarpetas"));
-            ui.checkbox(&mut self.add_folders, tr("incluir carpetas"));
-            ui.add(egui::TextEdit::singleline(&mut self.add_mask).hint_text(if self.add_regex { "\\.(jpe?g|png)$" } else { tr("filtro: *.jpg; *.png") }).desired_width(130.0));
-            ui.checkbox(&mut self.add_regex, tr("regex")).on_hover_text(tr("El filtro es una expresión regular en vez de comodines"));
-            ui.separator();
+        });
+        // 2. What a folder brings: the same filter controls as everywhere else.
+        ui.horizontal_wrapped(|ui| {
+            row_label(ui, tr("DE LAS CARPETAS"));
+            ui.add(egui::TextEdit::singleline(&mut self.add_mask).hint_text(if self.add_regex { "\\.(jpe?g|png)$" } else { tr("solo: *.jpg; *.png") }).desired_width(170.0).font(egui::TextStyle::Monospace));
+            ui.checkbox(&mut self.add_regex, tr("Expresión regular")).on_hover_text(tr("El filtro es una expresión regular en vez de comodines"));
+            ui.checkbox(&mut self.add_recursive, tr("Incluir subcarpetas"));
+            ui.checkbox(&mut self.add_folders, tr("Añadir también las carpetas"));
+        });
+        // 3. The list: order it and choose which of its items get renamed.
+        ui.horizontal_wrapped(|ui| {
+            row_label(ui, tr("LISTA"));
             ui.menu_button(tr("Ordenar ⏷"), |ui| {
                 let mut sort = |ui: &mut egui::Ui, label: &str, f: &dyn Fn(&Item, &Item) -> std::cmp::Ordering| {
                     if ui.button(label).clicked() {
@@ -880,12 +920,12 @@ impl Renamer {
                 }
             });
             let sel = self.selected;
-            if ui.add_enabled(sel.map(|s| s > 0).unwrap_or(false), egui::Button::new("⬆")).on_hover_text(tr("Subir")).clicked() {
+            if ui.add_enabled(sel.map(|s| s > 0).unwrap_or(false), egui::Button::new("⬆")).on_hover_text(tr("Subir el elemento elegido")).clicked() {
                 let s = sel.unwrap();
                 self.items.swap(s, s - 1);
                 self.selected = Some(s - 1);
             }
-            if ui.add_enabled(sel.map(|s| s + 1 < self.items.len()).unwrap_or(false), egui::Button::new("⬇")).on_hover_text(tr("Bajar")).clicked() {
+            if ui.add_enabled(sel.map(|s| s + 1 < self.items.len()).unwrap_or(false), egui::Button::new("⬇")).on_hover_text(tr("Bajar el elemento elegido")).clicked() {
                 let s = sel.unwrap();
                 self.items.swap(s, s + 1);
                 self.selected = Some(s + 1);
@@ -894,16 +934,15 @@ impl Renamer {
                 self.items.remove(sel.unwrap());
                 self.selected = None;
             }
-            if ui.button(tr("Vaciar lista")).clicked() {
+            if ui.add_enabled(!self.items.is_empty(), egui::Button::new(tr("Vaciar lista"))).clicked() {
                 self.items.clear();
                 self.selected = None;
             }
         });
         ui.horizontal_wrapped(|ui| {
-            ui.label(tr("Marcar por patrón:"));
-            ui.add(egui::TextEdit::singleline(&mut self.mark_text).hint_text(if self.mark_regex { "^IMG_\\d+" } else { "*.jpg; foto*" }).desired_width(160.0).font(egui::TextStyle::Monospace));
-            ui.radio_value(&mut self.mark_regex, false, tr("Comodines"));
-            ui.radio_value(&mut self.mark_regex, true, tr("Regex"));
+            row_label(ui, tr("RENOMBRAR SOLO"));
+            ui.add(egui::TextEdit::singleline(&mut self.mark_text).hint_text(if self.mark_regex { "^IMG_\\d+" } else { "*.jpg; foto*" }).desired_width(170.0).font(egui::TextStyle::Monospace));
+            ui.checkbox(&mut self.mark_regex, tr("Expresión regular"));
             let m = name_matcher(&self.mark_text, self.mark_regex);
             let ok = matches!(m, Ok(Some(_)));
             let mut set = |only: bool| {
@@ -953,14 +992,19 @@ impl Renamer {
                 .response
                 .on_hover_text(tr("Preajustes listos para usar"));
                 ui.menu_button(tr("➕ Añadir regla"), |ui| {
-                    for (n, k) in RuleKind::all_defaults().into_iter().enumerate() {
-                        if n == 3 || n == 14 || n == 16 {
-                            ui.separator();
+                    ui.set_min_width(260.0);
+                    let all = RuleKind::all_defaults();
+                    // Grouped by what they do; the order inside each group is the most used first.
+                    for (group, idx) in [("AÑADIR", &[0usize, 1, 2, 5, 3][..]), ("CAMBIAR", &[4, 7, 17, 12, 9][..]), ("QUITAR Y LIMPIAR", &[8, 6, 10, 13, 11][..]), ("AVANZADO", &[14, 15, 16][..])] {
+                        ui.label(RichText::new(tr(group)).small().strong().color(theme::p().sub));
+                        for &n in idx {
+                            let k = &all[n];
+                            if ui.button(format!("{}  {}", k.icon(), k.title())).on_hover_text(k.help()).clicked() {
+                                self.rules.push(Rule { on: true, scope: Scope::Name, kind: k.clone() });
+                                ui.close_menu();
+                            }
                         }
-                        if ui.button(format!("{}  {}", k.icon(), k.title())).clicked() {
-                            self.rules.push(Rule { on: true, scope: Scope::Name, kind: k });
-                            ui.close_menu();
-                        }
+                        ui.add_space(4.0);
                     }
                 });
             });
@@ -973,36 +1017,47 @@ impl Renamer {
                 let rule = &mut self.rules[i];
                 egui::Frame::group(ui.style()).fill(theme::p().base).inner_margin(6).show(ui, |ui| {
                     ui.set_width(ui.available_width());
+                    let folded = self.folded.contains(&i);
                     ui.horizontal(|ui| {
-                        ui.checkbox(&mut rule.on, "");
-                        ui.label(RichText::new(format!("{}. {}  {}", i + 1, rule.kind.icon(), rule.kind.title())).strong());
+                        if ui.small_button(if folded { "⏵" } else { "⏷" }).on_hover_text(if folded { tr("Mostrar las opciones") } else { tr("Plegar") }).clicked() {
+                            action = Some((i, 3));
+                        }
+                        ui.checkbox(&mut rule.on, "").on_hover_text(tr("Activar o desactivar esta regla sin quitarla"));
+                        let title = ui.add(egui::Label::new(RichText::new(format!("{}. {}  {}", i + 1, rule.kind.icon(), rule.kind.title())).strong()).sense(egui::Sense::click()));
+                        if title.on_hover_text(rule.kind.help()).clicked() {
+                            action = Some((i, 3));
+                        }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.small_button("🗑").on_hover_text(tr("Quitar regla")).clicked() {
                                 action = Some((i, 0));
                             }
-                            if ui.add_enabled(i + 1 < n, egui::Button::new("⬇").small()).clicked() {
+                            if ui.small_button("🗐").on_hover_text(tr("Duplicar regla")).clicked() {
+                                action = Some((i, 2));
+                            }
+                            if ui.add_enabled(i + 1 < n, egui::Button::new("⬇").small()).on_hover_text(tr("Bajar")).clicked() {
                                 action = Some((i, 1));
                             }
-                            if ui.add_enabled(i > 0, egui::Button::new("⬆").small()).clicked() {
+                            if ui.add_enabled(i > 0, egui::Button::new("⬆").small()).on_hover_text(tr("Subir")).clicked() {
                                 action = Some((i, -1));
                             }
+                        });
+                    });
+                    if !folded {
+                        ui.label(RichText::new(rule.kind.help()).small().italics().color(theme::p().muted));
+                        ui.add_space(2.0);
+                        ui.add_enabled_ui(rule.on, |ui| {
+                            // Every rule that changes the name starts with the same «Aplicar a» line.
                             if rule.kind.uses_scope() {
-                                let label = match rule.scope {
-                                    Scope::Name => tr("Nombre"),
-                                    Scope::Ext => tr("Extensión"),
-                                    Scope::Full => tr("Todo"),
-                                };
-                                egui::ComboBox::from_id_salt(("ambito", i)).width(90.0).selected_text(label).show_ui(ui, |ui| {
+                                field(ui, tr("Aplicar a"), |ui| {
+                                    ui.spacing_mut().item_spacing.x = 4.0;
                                     ui.selectable_value(&mut rule.scope, Scope::Name, tr("Nombre"));
                                     ui.selectable_value(&mut rule.scope, Scope::Ext, tr("Extensión"));
                                     ui.selectable_value(&mut rule.scope, Scope::Full, tr("Todo"));
                                 })
-                                .response
-                                .on_hover_text(tr("A qué parte se aplica: el nombre sin extensión, solo la extensión o el nombre completo."));
                             }
+                            rule_editor(ui, i, &mut rule.kind)
                         });
-                    });
-                    ui.add_enabled_ui(rule.on, |ui| rule_editor(ui, i, &mut rule.kind));
+                    }
                     if let Some(e) = err {
                         let msg = if matches!(rule.kind, RuleKind::Awk { .. }) { trf!("awk: {}", e) } else { trf!("Expresión no válida: {}", e) };
                         ui.label(RichText::new(msg).small().color(theme::p().danger));
@@ -1011,12 +1066,29 @@ impl Renamer {
                 ui.add_space(2.0);
             }
             if let Some((i, d)) = action {
+                // Folding follows the rules when they move.
+                let shift = |set: &HashSet<usize>, f: &dyn Fn(usize) -> Option<usize>| set.iter().filter_map(|&k| f(k)).collect::<HashSet<usize>>();
                 match d {
                     0 => {
                         self.rules.remove(i);
+                        self.folded = shift(&self.folded, &|k| if k == i { None } else if k > i { Some(k - 1) } else { Some(k) });
                     }
-                    -1 => self.rules.swap(i, i - 1),
-                    _ => self.rules.swap(i, i + 1),
+                    2 => {
+                        let copy = self.rules[i].clone();
+                        self.rules.insert(i + 1, copy);
+                        self.folded = shift(&self.folded, &|k| Some(if k > i { k + 1 } else { k }));
+                    }
+                    3 => {
+                        if !self.folded.remove(&i) {
+                            self.folded.insert(i);
+                        }
+                    }
+                    -1 | 1 => {
+                        let j = if d == -1 { i - 1 } else { i + 1 };
+                        self.rules.swap(i, j);
+                        self.folded = shift(&self.folded, &|k| Some(if k == i { j } else if k == j { i } else { k }));
+                    }
+                    _ => {}
                 }
             }
             if self.rules.is_empty() {
@@ -1231,25 +1303,80 @@ impl Renamer {
     }
 }
 
+// ---- the same layout for every rule: a label column on the left, its controls on the right ----
+
+const LABEL_W: f32 = 92.0;
+
+/// One labelled line of a rule's options.
+fn field(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        crate::checksum::cell(ui, LABEL_W, 20.0, |ui| ui.label(RichText::new(label).color(theme::p().sub)));
+        add(ui);
+    });
+}
+
+/// A choice among a few options, always shown as the same row of buttons.
+fn choice(ui: &mut egui::Ui, value: &mut u8, options: &[&str]) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        for (k, l) in options.iter().enumerate() {
+            ui.selectable_value(value, k as u8, tr(l));
+        }
+    });
+}
+
+fn bool_choice(ui: &mut egui::Ui, value: &mut bool, off: &str, on: &str) {
+    let mut v = *value as u8;
+    choice(ui, &mut v, &[off, on]);
+    *value = v == 1;
+}
+
+/// A text box for text with placeholders, and buttons that add the usual ones.
+fn text_with_codes(ui: &mut egui::Ui, text: &mut String, hint: &str, codes: &[&str]) {
+    field(ui, tr("Texto"), |ui| {
+        ui.add(egui::TextEdit::singleline(text).hint_text(hint).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));
+    });
+    ui.horizontal_wrapped(|ui| {
+        crate::checksum::cell(ui, LABEL_W, 18.0, |ui| ui.label(RichText::new(tr("insertar")).small().color(theme::p().muted)));
+        ui.spacing_mut().item_spacing.x = 4.0;
+        for code in codes {
+            if ui.small_button(code.trim()).on_hover_text(tr("Añadir al final")).clicked() {
+                text.push_str(code);
+            }
+        }
+    });
+}
+
+fn note(ui: &mut egui::Ui, text: &str) {
+    ui.label(RichText::new(text).small().color(theme::p().muted));
+}
+
+/// Where a counter or a total goes: start, end or a position, with its separator.
+fn placement_ui(ui: &mut egui::Ui, pos: &mut u8, at: &mut usize, sep: &mut String) {
+    field(ui, tr("Dónde"), |ui| {
+        choice(ui, pos, &["Al principio", "Al final", "En la posición"]);
+        if *pos == 2 {
+            ui.add(egui::DragValue::new(at).range(0..=255));
+        }
+    });
+    if *pos != 2 {
+        field(ui, tr("Separador"), |ui| {
+            ui.add(egui::TextEdit::singleline(sep).desired_width(60.0).font(egui::TextStyle::Monospace));
+        });
+    }
+}
+
 fn rule_editor(ui: &mut egui::Ui, i: usize, kind: &mut RuleKind) {
     match kind {
         RuleKind::Template { pattern } => {
-            ui.add(egui::TextEdit::singleline(pattern).hint_text("{nombre} - {n}").desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));
-            ui.horizontal_wrapped(|ui| {
-                for code in ["{nombre}", "{n}", "{fecha}", "{carpeta}", "{ext}"] {
-                    if ui.small_button(code).on_hover_text(tr("Añadir al final")).clicked() {
-                        pattern.push_str(code);
-                    }
-                }
-            });
+            text_with_codes(ui, pattern, "{nombre} - {n}", &["{nombre}", "{n}", "{fecha}", "{carpeta}", "{ext}"]);
+        }
+        RuleKind::Prefix { text } | RuleKind::Suffix { text } => {
+            text_with_codes(ui, text, tr("texto o marcadores"), &["{fecha} ", "{carpeta} - ", "{n} ", "{captura} "]);
         }
         RuleKind::Replace { find, with, regex, wildcard, case_sensitive, all } => {
             let mut mode: u8 = if *regex { 2 } else if *wildcard { 1 } else { 0 };
-            ui.horizontal_wrapped(|ui| {
-                ui.radio_value(&mut mode, 0, tr("Texto"));
-                ui.radio_value(&mut mode, 1, tr("Comodines * ?")).on_hover_text(tr("* es cualquier texto y ? un carácter; el patrón abarca el nombre entero. En el reemplazo, cada * o ? pone lo que encontró su comodín: «IMG_*» » «Foto *»."));
-                ui.radio_value(&mut mode, 2, tr("Expresión regular")).on_hover_text(tr("Grupos con ( ) y en el reemplazo $1, $2… o ${nombre}."));
-            });
+            field(ui, tr("Tipo"), |ui| choice(ui, &mut mode, &["Texto", "Comodines * ?", "Expresión regular"]));
             *regex = mode == 2;
             *wildcard = mode == 1;
             let (hf, hw) = match mode {
@@ -1257,105 +1384,98 @@ fn rule_editor(ui: &mut egui::Ui, i: usize, kind: &mut RuleKind) {
                 2 => ("(\\d+)_(.*)", "$2 - $1"),
                 _ => ("", ""),
             };
-            let w = ui.available_width();
             for (label, text, hint) in [(tr("Buscar"), &mut *find, hf), (tr("Reemplazar por"), &mut *with, hw)] {
-                ui.horizontal(|ui| {
-                    ui.add_sized([100.0, 20.0], egui::Label::new(label));
-                    ui.add(egui::TextEdit::singleline(text).desired_width(w - 110.0).font(egui::TextStyle::Monospace).hint_text(hint));
+                field(ui, label, |ui| {
+                    ui.add(egui::TextEdit::singleline(text).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace).hint_text(hint));
                 });
             }
-            ui.horizontal_wrapped(|ui| {
+            field(ui, tr("Opciones"), |ui| {
                 ui.checkbox(case_sensitive, tr("Distinguir mayúsculas"));
                 if mode != 1 {
                     ui.checkbox(all, tr("Todas las veces"));
                 }
             });
-            if mode == 2 {
-                ui.collapsing(tr("Ejemplos"), |ui| {
-                    for (f, w, d) in REGEX_EXAMPLES {
-                        if ui.link(RichText::new(format!("{f}  »  {w}")).monospace().small()).on_hover_text(tr("Usar este ejemplo")).clicked() {
-                            *find = f.to_string();
-                            *with = w.to_string();
+            match mode {
+                1 => note(ui, tr("* es cualquier texto y ? un carácter; el patrón abarca el nombre entero. En el reemplazo, cada * o ? pone lo que encontró su comodín: «IMG_*» » «Foto *».")),
+                2 => {
+                    note(ui, tr("Grupos con ( ) y en el reemplazo $1, $2… o ${nombre}."));
+                    ui.collapsing(tr("Ejemplos"), |ui| {
+                        for (f, w, d) in REGEX_EXAMPLES {
+                            if ui.link(RichText::new(format!("{f}  »  {w}")).monospace().small()).on_hover_text(tr("Usar este ejemplo")).clicked() {
+                                *find = f.to_string();
+                                *with = w.to_string();
+                            }
+                            note(ui, tr(d));
                         }
-                        ui.label(RichText::new(tr(d)).small().color(theme::p().muted));
-                    }
-                });
+                    });
+                }
+                _ => {}
             }
         }
         RuleKind::Case { mode } => {
-            ui.horizontal_wrapped(|ui| {
-                for (k, l) in CASE_MODES.iter().enumerate() {
-                    ui.selectable_value(mode, k as u8, tr(l));
-                }
-            });
+            field(ui, tr("Convertir a"), |ui| choice(ui, mode, &CASE_MODES));
         }
         RuleKind::Insert { text, pos, from_end } => {
-            ui.add(egui::TextEdit::singleline(text).hint_text(tr("texto o marcadores")).desired_width(f32::INFINITY));
-            ui.horizontal(|ui| {
-                ui.label(tr("en la posición"));
+            field(ui, tr("Texto"), |ui| {
+                ui.add(egui::TextEdit::singleline(text).hint_text(tr("texto o marcadores")).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));
+            });
+            field(ui, tr("Posición"), |ui| {
                 ui.add(egui::DragValue::new(pos).range(0..=999));
-                ui.radio_value(from_end, false, tr("desde el principio"));
-                ui.radio_value(from_end, true, tr("desde el final"));
+                bool_choice(ui, from_end, "desde el principio", "desde el final");
             });
         }
         RuleKind::Remove { from, count, from_end } => {
-            ui.horizontal(|ui| {
-                ui.label(tr("Quitar"));
-                ui.add(egui::DragValue::new(count).range(0..=999));
-                ui.label(tr("caracteres desde la posición"));
-                ui.add(egui::DragValue::new(from).range(0..=999));
+            field(ui, tr("Cuántos"), |ui| {
+                ui.add(egui::DragValue::new(count).range(0..=999).suffix(tr(" caracteres")));
             });
-            ui.horizontal(|ui| {
-                ui.radio_value(from_end, false, tr("contando desde el principio"));
-                ui.radio_value(from_end, true, tr("contando desde el final"));
+            field(ui, tr("Desde"), |ui| {
+                ui.add(egui::DragValue::new(from).range(0..=999));
+                bool_choice(ui, from_end, "contando desde el principio", "contando desde el final");
             });
         }
         RuleKind::Number { suffix, sep } => {
-            ui.horizontal(|ui| {
-                ui.radio_value(suffix, false, tr("Delante"));
-                ui.radio_value(suffix, true, tr("Detrás"));
-                ui.label(tr("separador"));
-                ui.add(egui::TextEdit::singleline(sep).desired_width(40.0));
+            field(ui, tr("Dónde"), |ui| bool_choice(ui, suffix, "Delante", "Detrás"));
+            field(ui, tr("Separador"), |ui| {
+                ui.add(egui::TextEdit::singleline(sep).desired_width(60.0).font(egui::TextStyle::Monospace));
             });
-            ui.label(RichText::new(tr("Inicio, paso y cifras se ajustan en «Contador».")).small().color(theme::p().muted));
+            note(ui, tr("Inicio, paso y cifras se ajustan en «Contador»."));
         }
         RuleKind::Clean { trim, collapse, spaces, accents, special } => {
-            ui.horizontal_wrapped(|ui| {
-                ui.checkbox(trim, tr("Quitar espacios al inicio y final"));
-                ui.checkbox(collapse, tr("Unir espacios repetidos"));
-                ui.checkbox(accents, tr("Quitar tildes (á » a)"));
-                ui.checkbox(special, tr("Quitar símbolos raros"));
+            field(ui, tr("Espacios"), |ui| {
+                ui.checkbox(trim, tr("Quitar al inicio y final"));
+                ui.checkbox(collapse, tr("Unir repetidos"));
             });
-            egui::ComboBox::from_id_salt(("espacios", i)).selected_text(tr(SPACE_MODES[*spaces as usize])).show_ui(ui, |ui| {
-                for (k, l) in SPACE_MODES.iter().enumerate() {
-                    ui.selectable_value(spaces, k as u8, tr(l));
-                }
+            field(ui, tr("Cambiar"), |ui| {
+                egui::ComboBox::from_id_salt(("espacios", i)).width(170.0).selected_text(tr(SPACE_MODES[*spaces as usize])).show_ui(ui, |ui| {
+                    for (k, l) in SPACE_MODES.iter().enumerate() {
+                        ui.selectable_value(spaces, k as u8, tr(l));
+                    }
+                });
+            });
+            field(ui, tr("Quitar"), |ui| {
+                ui.checkbox(accents, tr("Tildes (á » a)"));
+                ui.checkbox(special, tr("Símbolos raros"));
             });
         }
         RuleKind::Ext { mode, text } => {
-            ui.horizontal_wrapped(|ui| {
-                for (k, l) in EXT_MODES.iter().enumerate() {
-                    ui.selectable_value(mode, k as u8, tr(l));
-                }
-            });
+            field(ui, tr("Extensión"), |ui| choice(ui, mode, &EXT_MODES));
             if *mode == 2 || *mode == 4 {
-                ui.add(egui::TextEdit::singleline(text).hint_text("jpg").desired_width(100.0));
+                field(ui, tr("Nueva"), |ui| {
+                    ui.add(egui::TextEdit::singleline(text).hint_text("jpg").desired_width(100.0).font(egui::TextStyle::Monospace));
+                });
             }
         }
         RuleKind::PadNumbers { digits } => {
-            ui.horizontal(|ui| {
-                ui.label(tr("Cada número con al menos"));
+            field(ui, tr("Cifras"), |ui| {
                 ui.add(egui::DragValue::new(digits).range(1..=10));
-                ui.label(tr("cifras"));
+                note(ui, tr("como mínimo en cada número"));
             });
-            ui.label(RichText::new(tr("foto 2 » foto 002: así se ordenan bien.")).small().color(theme::p().muted));
         }
         RuleKind::RemoveBetween { open, close } => {
-            ui.horizontal(|ui| {
-                ui.label(tr("Desde"));
-                ui.add(egui::TextEdit::singleline(open).desired_width(40.0));
-                ui.label(tr("hasta"));
-                ui.add(egui::TextEdit::singleline(close).desired_width(40.0));
+            field(ui, tr("Desde / hasta"), |ui| {
+                ui.add(egui::TextEdit::singleline(open).desired_width(36.0).font(egui::TextStyle::Monospace));
+                ui.add(egui::TextEdit::singleline(close).desired_width(36.0).font(egui::TextStyle::Monospace));
+                ui.spacing_mut().item_spacing.x = 4.0;
                 for (a, b) in [("(", ")"), ("[", "]"), ("{", "}")] {
                     if ui.small_button(format!("{a} {b}")).clicked() {
                         *open = a.into();
@@ -1363,42 +1483,102 @@ fn rule_editor(ui: &mut egui::Ui, i: usize, kind: &mut RuleKind) {
                     }
                 }
             });
-            ui.label(RichText::new(tr("Quita también los símbolos: «canción (live) [HD]» » «canción»")).small().color(theme::p().muted));
         }
         RuleKind::Truncate { max, from_end } => {
-            ui.horizontal(|ui| {
-                ui.label(tr("Como mucho"));
-                ui.add(egui::DragValue::new(max).range(1..=255));
-                ui.label(tr("caracteres"));
-                ui.radio_value(from_end, false, tr("del principio"));
-                ui.radio_value(from_end, true, tr("del final"));
+            field(ui, tr("Como mucho"), |ui| {
+                ui.add(egui::DragValue::new(max).range(1..=255).suffix(tr(" caracteres")));
             });
+            field(ui, tr("Conservar"), |ui| bool_choice(ui, from_end, "el principio", "el final"));
         }
         RuleKind::Swap { sep, joiner } => {
-            ui.horizontal(|ui| {
-                ui.label(tr("Separar por"));
-                ui.add(egui::TextEdit::singleline(sep).desired_width(50.0));
-                ui.label(tr("y unir con"));
-                ui.add(egui::TextEdit::singleline(joiner).desired_width(50.0));
+            field(ui, tr("Separar por"), |ui| {
+                ui.add(egui::TextEdit::singleline(sep).desired_width(60.0).font(egui::TextStyle::Monospace));
             });
-            ui.label(RichText::new(tr("«Artista - Canción» » «Canción - Artista»")).small().color(theme::p().muted));
+            field(ui, tr("Unir con"), |ui| {
+                ui.add(egui::TextEdit::singleline(joiner).desired_width(60.0).font(egui::TextStyle::Monospace));
+            });
         }
         RuleKind::Strip { mode } => {
-            for (k, l) in STRIP_MODES.iter().enumerate() {
-                ui.radio_value(mode, k as u8, tr(l));
+            field(ui, tr("Quitar"), |ui| {
+                egui::ComboBox::from_id_salt(("restos", i)).width(260.0).selected_text(tr(STRIP_MODES[*mode as usize])).show_ui(ui, |ui| {
+                    for (k, l) in STRIP_MODES.iter().enumerate() {
+                        ui.selectable_value(mode, k as u8, tr(l));
+                    }
+                });
+            });
+        }
+        RuleKind::Counter { start, step, pad, style, pos, at, sep, reset, group } => {
+            field(ui, tr("Números"), |ui| {
+                ui.label(tr("desde"));
+                ui.add(egui::DragValue::new(start));
+                ui.label(tr("paso"));
+                ui.add(egui::DragValue::new(step));
+                ui.label(tr("cifras"));
+                ui.add(egui::DragValue::new(pad).range(1..=10));
+            });
+            field(ui, tr("Estilo"), |ui| {
+                egui::ComboBox::from_id_salt(("estilo", i)).width(150.0).selected_text(tr(COUNTER_STYLES[*style as usize])).show_ui(ui, |ui| {
+                    for (k, l) in COUNTER_STYLES.iter().enumerate() {
+                        ui.selectable_value(style, k as u8, tr(l));
+                    }
+                });
+            });
+            placement_ui(ui, pos, at, sep);
+            field(ui, tr("Reiniciar"), |ui| choice(ui, reset, &["nunca", "en cada carpeta", "cuando cambia"]));
+            if *reset == 2 {
+                field(ui, tr("Cambia"), |ui| {
+                    ui.add(egui::TextEdit::singleline(group).hint_text("{carpeta}").desired_width(f32::INFINITY).font(egui::TextStyle::Monospace))
+                        .on_hover_text(tr("Vuelve a empezar cada vez que este texto cambia, p. ej. {captura} para numerar las fotos de cada día o {album} para cada disco. Ordena la lista antes."));
+                });
             }
         }
+        RuleKind::Accumulate { what, inclusive, pos, at, sep } => {
+            field(ui, tr("Qué sumar"), |ui| {
+                egui::ComboBox::from_id_salt(("acumulado", i)).width(260.0).selected_text(tr(ACCUM_KINDS[*what as usize])).show_ui(ui, |ui| {
+                    for (k, l) in ACCUM_KINDS.iter().enumerate() {
+                        ui.selectable_value(what, k as u8, tr(l));
+                    }
+                });
+            });
+            field(ui, tr("Contar"), |ui| bool_choice(ui, inclusive, "lo anterior", "hasta él incluido"))
+                ;
+            placement_ui(ui, pos, at, sep);
+        }
+        RuleKind::Variable { name, value, mode, sep } => {
+            field(ui, tr("Variable"), |ui| {
+                ui.add(egui::TextEdit::singleline(name).desired_width(80.0).font(egui::TextStyle::Monospace));
+            });
+            field(ui, tr("Valor"), |ui| {
+                ui.add(egui::TextEdit::singleline(value).hint_text("{nombre:1:3}").desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));
+            });
+            field(ui, tr("Modo"), |ui| choice(ui, mode, &["Asignar", "Acumular texto", "Sumar números"]));
+            if *mode == 1 {
+                field(ui, tr("Separador"), |ui| {
+                    ui.add(egui::TextEdit::singleline(sep).desired_width(60.0).font(egui::TextStyle::Monospace));
+                });
+            }
+            note(ui, &trf!("Úsala en reglas posteriores con {}.", format!("{{var:{}}}", name.trim())));
+        }
         RuleKind::Awk { script, fs, input, system } => {
-            ui.label(RichText::new(tr("Todos los nombres pasan por awk a la vez, uno por línea, como en «ls | awk '…'». Cada archivo toma la línea que le corresponde.")).small().color(theme::p().muted));
             ui.add(egui::TextEdit::multiline(script).font(egui::TextStyle::Monospace).desired_rows(3).desired_width(f32::INFINITY).hint_text("{ print toupper($0) }"));
-            ui.horizontal_wrapped(|ui| {
-                ui.radio_value(input, 0, tr("Solo el nombre"));
-                ui.radio_value(input, 1, tr("Nombre y datos"))
-                    .on_hover_text(tr("Campos separados por tabulador: $1 nombre actual, $2 nombre original, $3 extensión original, $4 carpeta, $5 tamaño en bytes, $6 fecha de modificación (AAAA-MM-DD), $7 ruta completa."));
-                if *input == 0 {
-                    ui.label(tr("separador -F"));
-                    ui.add(egui::TextEdit::singleline(fs).desired_width(36.0).font(egui::TextStyle::Monospace)).on_hover_text(tr("Vacío: espacios, como awk por defecto"));
+            field(ui, tr("Entrada"), |ui| {
+                choice(ui, input, &["Solo el nombre", "Nombre y datos"]);
+            });
+            if *input == 0 {
+                field(ui, tr("Separador -F"), |ui| {
+                    ui.add(egui::TextEdit::singleline(fs).desired_width(60.0).font(egui::TextStyle::Monospace)).on_hover_text(tr("Vacío: espacios, como awk por defecto"));
+                });
+            } else {
+                note(ui, tr("Campos separados por tabulador: $1 nombre actual, $2 nombre original, $3 extensión original, $4 carpeta, $5 tamaño en bytes, $6 fecha de modificación (AAAA-MM-DD), $7 ruta completa."));
+            }
+            field(ui, tr("Motor"), |ui| {
+                let found = awk_program().is_some();
+                if !found {
+                    *system = false;
                 }
+                ui.add_enabled(found, egui::Checkbox::new(system, tr("Usar el awk instalado en el sistema")))
+                    .on_hover_text(tr("Útil para extensiones de gawk. Si no, se usa el awk incluido en el programa, que funciona igual en Windows, Mac y Linux sin instalar nada."))
+                    .on_disabled_hover_text(tr("No hay ningún awk instalado; se usa el incluido en el programa."));
             });
             ui.collapsing(tr("Ejemplos"), |ui| {
                 for (sc, mode, d) in AWK_EXAMPLES {
@@ -1407,83 +1587,9 @@ fn rule_editor(ui: &mut egui::Ui, i: usize, kind: &mut RuleKind) {
                         *input = *mode;
                         fs.clear();
                     }
-                    ui.label(RichText::new(tr(d)).small().color(theme::p().muted));
+                    note(ui, tr(d));
                 }
             });
-            ui.horizontal_wrapped(|ui| {
-                let found = awk_program().is_some();
-                if !found {
-                    *system = false;
-                }
-                ui.add_enabled(found, egui::Checkbox::new(system, tr("Usar el awk instalado en el sistema")))
-                    .on_hover_text(tr("Útil para extensiones de gawk. Si no, se usa el awk incluido en el programa, que funciona igual en Windows, Mac y Linux sin instalar nada."))
-                    .on_disabled_hover_text(tr("No hay ningún awk instalado; se usa el incluido en el programa."));
-                if !*system {
-                    ui.label(RichText::new(tr("awk incluido: no hace falta instalar nada")).small().color(theme::p().ok));
-                }
-            });
-        }
-        RuleKind::Prefix { text } | RuleKind::Suffix { text } => {
-            ui.add(egui::TextEdit::singleline(text).hint_text(tr("texto o marcadores")).desired_width(f32::INFINITY));
-            ui.horizontal_wrapped(|ui| {
-                for code in ["{fecha} ", "{carpeta} - ", "{n} ", "{captura} "] {
-                    if ui.small_button(code.trim()).on_hover_text(tr("Añadir al final")).clicked() {
-                        text.push_str(code);
-                    }
-                }
-            });
-        }
-        RuleKind::Counter { start, step, pad, style, pos, at, sep, reset, group } => {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(tr("Empieza en"));
-                ui.add(egui::DragValue::new(start));
-                ui.label(tr("paso"));
-                ui.add(egui::DragValue::new(step));
-                ui.label(tr("cifras"));
-                ui.add(egui::DragValue::new(pad).range(1..=10));
-                egui::ComboBox::from_id_salt(("estilo", i)).width(110.0).selected_text(tr(COUNTER_STYLES[*style as usize])).show_ui(ui, |ui| {
-                    for (k, l) in COUNTER_STYLES.iter().enumerate() {
-                        ui.selectable_value(style, k as u8, tr(l));
-                    }
-                });
-            });
-            placement_ui(ui, pos, at, sep);
-            ui.horizontal_wrapped(|ui| {
-                ui.label(tr("Reiniciar:"));
-                ui.radio_value(reset, 0, tr("nunca"));
-                ui.radio_value(reset, 1, tr("en cada carpeta"));
-                ui.radio_value(reset, 2, tr("cuando cambia"));
-            });
-            if *reset == 2 {
-                ui.add(egui::TextEdit::singleline(group).hint_text("{carpeta}").desired_width(f32::INFINITY).font(egui::TextStyle::Monospace))
-                    .on_hover_text(tr("Vuelve a empezar cada vez que este texto cambia, p. ej. {captura} para numerar las fotos de cada día o {album} para cada disco. Ordena la lista antes."));
-            }
-        }
-        RuleKind::Accumulate { what, inclusive, pos, at, sep } => {
-            for (k, l) in ACCUM_KINDS.iter().enumerate() {
-                ui.radio_value(what, k as u8, tr(l));
-            }
-            ui.checkbox(inclusive, tr("Contar también el elemento actual"))
-                .on_hover_text(tr("Desmarcado: lo acumulado antes de él (p. ej. la hora de inicio de cada canción en una mezcla). Marcado: el total hasta él incluido."));
-            placement_ui(ui, pos, at, sep);
-        }
-        RuleKind::Variable { name, value, mode, sep } => {
-            ui.horizontal(|ui| {
-                ui.label(tr("Variable"));
-                ui.add(egui::TextEdit::singleline(name).desired_width(70.0).font(egui::TextStyle::Monospace));
-                ui.label("=");
-                ui.add(egui::TextEdit::singleline(value).hint_text("{nombre:1:3}").desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));
-            });
-            ui.horizontal_wrapped(|ui| {
-                ui.radio_value(mode, 0, tr("Asignar"));
-                ui.radio_value(mode, 1, tr("Acumular texto"));
-                ui.radio_value(mode, 2, tr("Sumar números"));
-                if *mode == 1 {
-                    ui.label(tr("separador"));
-                    ui.add(egui::TextEdit::singleline(sep).desired_width(40.0));
-                }
-            });
-            ui.label(RichText::new(trf!("No cambia el nombre: guarda un valor que va pasando de un archivo al siguiente. Úsalo en reglas posteriores con {}.", format!("{{var:{}}}", name.trim()))).small().color(theme::p().muted));
         }
     }
 }
@@ -2068,20 +2174,6 @@ fn fmt_num(v: f64) -> String {
     } else {
         format!("{v:.2}")
     }
-}
-
-fn placement_ui(ui: &mut egui::Ui, pos: &mut u8, at: &mut usize, sep: &mut String) {
-    ui.horizontal_wrapped(|ui| {
-        ui.radio_value(pos, 0, tr("Al principio"));
-        ui.radio_value(pos, 1, tr("Al final"));
-        ui.radio_value(pos, 2, tr("En la posición"));
-        if *pos == 2 {
-            ui.add(egui::DragValue::new(at).range(0..=255));
-        } else {
-            ui.label(tr("separador"));
-            ui.add(egui::TextEdit::singleline(sep).desired_width(46.0));
-        }
-    });
 }
 
 fn tidy_spaces(s: &str) -> String {
