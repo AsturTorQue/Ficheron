@@ -160,8 +160,71 @@ impl Default for Opts {
     }
 }
 
+/// Formats the `image` crate can't read but FFmpeg can (when it is installed).
+const FFMPEG_EXTS: [&str; 3] = ["avif", "heic", "heif"];
+
+fn ext_of(p: &Path) -> String {
+    p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default()
+}
+
+/// FFmpeg, if the system has it: on the PATH or in the places graphical programs don't see
+/// (Homebrew on macOS, Program Files on Windows). Looked up once.
+pub fn ffmpeg() -> Option<&'static PathBuf> {
+    static FF: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    FF.get_or_init(|| {
+        let exe = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+        let mut candidates: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).map(|d| d.join(exe)).collect()).unwrap_or_default();
+        for d in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/snap/bin", r"C:\ffmpeg\bin", r"C:\Program Files\ffmpeg\bin", r"C:\ProgramData\chocolatey\bin"] {
+            candidates.push(Path::new(d).join(exe));
+        }
+        if let Some(h) = dirs::home_dir() {
+            candidates.push(h.join(".local/bin").join(exe));
+        }
+        candidates.into_iter().find(|c| c.is_file() && std::process::Command::new(c).arg("-version").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map(|s| s.success()).unwrap_or(false))
+    })
+    .as_ref()
+}
+
 fn is_image(p: &Path) -> bool {
-    p.extension().map(|e| EXTS.contains(&e.to_string_lossy().to_lowercase().as_str())).unwrap_or(false)
+    let e = ext_of(p);
+    EXTS.contains(&e.as_str()) || (FFMPEG_EXTS.contains(&e.as_str()) && ffmpeg().is_some())
+}
+
+/// Decodes the first picture of an AVIF/HEIC/HEIF file by asking FFmpeg for a temporary PNG.
+fn decode_with_ffmpeg(src: &Path) -> Result<DynamicImage, String> {
+    let ff = ffmpeg().ok_or_else(|| tr("Para leer AVIF y HEIC hace falta tener FFmpeg instalado").to_string())?;
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let tmp = std::env::temp_dir().join(format!("ficheron-{}-{}.png", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+    let out = std::process::Command::new(ff)
+        .args(["-v", "error", "-y", "-i"])
+        .arg(src)
+        .args(["-frames:v", "1"])
+        .arg(&tmp)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| e.to_string())?;
+    let img = if out.status.success() && tmp.is_file() {
+        image::open(&tmp).map_err(|e| e.to_string())
+    } else {
+        let msg = String::from_utf8_lossy(&out.stderr);
+        Err(trf!("FFmpeg no pudo leerlo: {}", msg.lines().last().unwrap_or("").trim()))
+    };
+    let _ = fs::remove_file(&tmp);
+    img
+}
+
+/// The format "Mismo formato" writes for a source: its own, except AVIF stays AVIF and
+/// HEIC/HEIF (which can't be written) become PNG.
+fn keep_fmt(src: &Path) -> Fmt {
+    match ext_of(src).as_str() {
+        "jpg" | "jpeg" => Fmt::Jpeg,
+        "webp" => Fmt::WebP,
+        "bmp" => Fmt::Bmp,
+        "gif" => Fmt::Gif,
+        "tif" | "tiff" => Fmt::Tiff,
+        "avif" => Fmt::Avif,
+        _ => Fmt::Png,
+    }
 }
 
 /// The size an image will have.
@@ -253,19 +316,15 @@ fn process(img: DynamicImage, path: &Path, o: &Opts) -> DynamicImage {
 }
 
 fn ext_for(fmt: Fmt, src: &Path) -> String {
+    if fmt == Fmt::Keep && matches!(ext_of(src).as_str(), "avif" | "heic" | "heif") {
+        return if ext_of(src) == "avif" { "avif".into() } else { "png".into() };
+    }
     FORMATS.iter().find(|f| f.0 == fmt && fmt != Fmt::Keep).map(|f| f.2.to_string()).unwrap_or_else(|| src.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_else(|| "png".into()))
 }
 
 fn encode(img: &DynamicImage, fmt: Fmt, src: &Path, o: &Opts, out: &mut BufWriter<fs::File>) -> Result<(), String> {
     let fmt = if fmt == Fmt::Keep {
-        match src.extension().map(|e| e.to_string_lossy().to_lowercase()).as_deref() {
-            Some("jpg" | "jpeg") => Fmt::Jpeg,
-            Some("webp") => Fmt::WebP,
-            Some("bmp") => Fmt::Bmp,
-            Some("gif") => Fmt::Gif,
-            Some("tif" | "tiff") => Fmt::Tiff,
-            _ => Fmt::Png,
-        }
+        keep_fmt(src)
     } else {
         fmt
     };
@@ -312,9 +371,15 @@ struct Res {
 fn run_one(src: &Path, n: usize, o: &Opts, taken: &Mutex<std::collections::HashSet<PathBuf>>) -> Res {
     let mut r = Res { src: src.to_path_buf(), in_bytes: fs::metadata(src).map(|m| m.len()).unwrap_or(0), ..Default::default() };
     let result = (|| -> Result<(), String> {
-        let img = image::ImageReader::open(src).map_err(|e| e.to_string())?.with_guessed_format().map_err(|e| e.to_string())?.decode().map_err(|e| e.to_string())?;
+        let via_ffmpeg = FFMPEG_EXTS.contains(&ext_of(src).as_str());
+        let img = if via_ffmpeg { decode_with_ffmpeg(src)? } else { image::ImageReader::open(src).map_err(|e| e.to_string())?.with_guessed_format().map_err(|e| e.to_string())?.decode().map_err(|e| e.to_string())? };
         r.from = (img.width(), img.height());
-        let img = process(img, src, o);
+        // FFmpeg already applies the rotation stored in the file.
+        let mut oo = o.clone();
+        if via_ffmpeg {
+            oo.auto_orient = false;
+        }
+        let img = process(img, src, &oo);
         r.to = (img.width(), img.height());
         let ext = ext_for(o.fmt, src);
         let stem = src.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
@@ -553,6 +618,11 @@ impl Imager {
                 self.items.clear();
             }
             ui.checkbox(&mut self.o.recursive, tr("Incluir subcarpetas"));
+            if ffmpeg().is_some() {
+                ui.label(RichText::new(tr("FFmpeg detectado: también se leen AVIF, HEIC y HEIF.")).small().color(theme::p().ok));
+            } else {
+                ui.label(RichText::new(tr("Con FFmpeg instalado también se leerían AVIF, HEIC y HEIF.")).small().color(theme::p().muted));
+            }
             ui.menu_button(tr("✨ Rápidos"), |ui| {
                 ui.label(RichText::new(tr("Cambian formato y tamaño; lo que has añadido se mantiene")).small().color(theme::p().muted));
                 for (name, desc, f) in PRESETS {
@@ -789,6 +859,30 @@ mod tests {
         o.h = 20;
         assert_eq!(target_dims(200, 100, &o), (10, 20));
         assert_eq!(expand_name("{nombre}-{ancho}x{alto}-{n}", "a/b", 5, 6, 2, "jpg"), "a-b-5x6-2");
+    }
+
+    #[test]
+    fn reads_avif_through_ffmpeg_when_installed() {
+        if ffmpeg().is_none() {
+            return;
+        }
+        let d = setup("avif");
+        // Make an AVIF with our own encoder, then read it back as a PNG through FFmpeg.
+        let o = Opts { fmt: Fmt::Avif, ..Opts::default() };
+        let r = run(&d, &o);
+        assert!(r.error.is_none(), "{:?}", r.error);
+        assert!(r.out.to_string_lossy().ends_with(".avif"));
+        assert!(is_image(&r.out));
+        let o2 = Opts { fmt: Fmt::Png, dest_other: true, dest: d.join("fuera"), ..Opts::default() };
+        let r2 = run_one(&r.out, 1, &o2, &Mutex::new(Default::default()));
+        match &r2.error {
+            None => assert_eq!(image::open(&r2.out).unwrap().dimensions(), (200, 100)),
+            // An FFmpeg build without an AV1 decoder can't read it: that must be a clear error, not a crash.
+            Some(e) => assert!(e.contains("FFmpeg"), "{e}"),
+        }
+        // HEIC/HEIF "same format" can't be written: they come out as PNG.
+        assert_eq!(ext_for(Fmt::Keep, Path::new("a.HEIC")), "png");
+        assert_eq!(ext_for(Fmt::Keep, Path::new("a.avif")), "avif");
     }
 
     #[test]
