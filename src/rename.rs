@@ -227,6 +227,9 @@ pub struct Renamer {
     add_mask: String,
     add_folders: bool,
     add_regex: bool,
+    /// The browsers behind «Elegir carpeta…» and «Elegir archivos…».
+    folder_browser: Option<crate::dupes::Browser>,
+    file_picker: Option<crate::roots::Picker>,
     mark_text: String,
     mark_regex: bool,
     history: Vec<Batch>,
@@ -251,6 +254,8 @@ impl Renamer {
             add_mask: String::new(),
             add_folders: false,
             add_regex: false,
+            folder_browser: None,
+            file_picker: None,
             mark_text: String::new(),
             mark_regex: false,
             history: load_history(),
@@ -803,6 +808,16 @@ impl Renamer {
         }
 
         self.list_toolbar(ui, selection, cwd);
+        // The browsers: a folder adds what is inside it (with the options of the toolbar); files are added as they are.
+        let ctx = ui.ctx().clone();
+        for dir in crate::roots::folder_window(&ctx, "rename_folder", &mut self.folder_browser, false) {
+            let n = self.add_folder(&dir);
+            self.status = Some((trf!("{} elemento(s) añadidos", n), false));
+        }
+        for p in crate::roots::picker_window(&ctx, "rename_files", &mut self.file_picker) {
+            let n = if p.is_dir() { self.add_folder(&p) } else { self.add_paths([p]) };
+            self.status = Some((trf!("{} elemento(s) añadidos", n), false));
+        }
         ui.separator();
         let h = 440.0;
         ui.horizontal_top(|ui| {
@@ -833,6 +848,13 @@ impl Renamer {
             if ui.button(tr("➕ Añadir carpeta actual")).on_hover_text(cwd.to_string_lossy()).clicked() {
                 let n = self.add_folder(cwd);
                 self.status = Some((trf!("{} elemento(s) añadidos", n), false));
+            }
+            let start = self.items.last().map(|i| i.path.parent().map(Path::to_path_buf).unwrap_or_else(|| cwd.to_path_buf())).unwrap_or_else(|| cwd.to_path_buf());
+            if ui.button(tr("📂 Elegir carpeta…")).on_hover_text(tr("Examinar y añadir el contenido de una carpeta (con las opciones de al lado)")).clicked() {
+                self.folder_browser = Some(crate::dupes::Browser::new(start.clone(), 0));
+            }
+            if ui.button(tr("📂 Elegir archivos…")).on_hover_text(tr("Examinar y marcar archivos o carpetas concretos")).clicked() {
+                self.file_picker = Some(crate::roots::Picker::new(start));
             }
             ui.checkbox(&mut self.add_recursive, tr("con subcarpetas"));
             ui.checkbox(&mut self.add_folders, tr("incluir carpetas"));
