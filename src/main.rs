@@ -13,6 +13,7 @@ mod images;
 mod icon;
 mod mkdirs;
 mod netpath;
+mod quicklook;
 mod textconv;
 mod fsops;
 mod rename;
@@ -220,6 +221,8 @@ enum Action {
     Up,
     SelectAll,
     SortBy(SortBy),
+    QuickLook,
+    CloseQuickLook,
     NewTab(Option<PathBuf>),
     CloseTab(usize),
     SwitchTab(usize),
@@ -263,6 +266,7 @@ struct App {
     message: Option<(String, bool, Instant)>,
     favorites: Vec<PathBuf>,
     preview: Option<(PathBuf, Option<String>)>,
+    quick: Option<quicklook::QuickLook>,
     tools: Vec<ToolWindow>,
     next_tool: u64,
     screenshot: Option<PathBuf>,
@@ -386,6 +390,7 @@ impl App {
             message: None,
             favorites,
             preview: None,
+            quick: None,
             tools: vec![],
             next_tool: 1,
             screenshot,
@@ -393,6 +398,12 @@ impl App {
             shot_requested: false,
         };
         app.reload();
+        // For checking the quick look in screenshots: FICHERON_QUICK=<file> opens it at start.
+        if let Ok(p) = std::env::var("FICHERON_QUICK") {
+            if let Some(e) = Entry::from_path(Path::new(&p)) {
+                app.quick = Some(quicklook::QuickLook::open(&cc.egui_ctx, &e));
+            }
+        }
         if let Some(tool) = open_tool {
             let kind = match tool {
                 "--extract" => Kind::Extract,
@@ -713,6 +724,14 @@ impl App {
             }
             Action::NewFolder => self.dialog = Some(Dialog::NewFolder(tr("Carpeta nueva").into())),
             Action::NewFile => self.dialog = Some(Dialog::NewFile(tr("Documento nuevo.txt").into())),
+            Action::QuickLook => {
+                if self.quick.is_some() {
+                    self.quick = None;
+                } else if let Some(e) = self.selected_entries().first().map(|e| (*e).clone()) {
+                    self.quick = Some(quicklook::QuickLook::open(ctx, &e));
+                }
+            }
+            Action::CloseQuickLook => self.quick = None,
             Action::Properties => {
                 let e = self.selected_entries().first().map(|e| (*e).clone()).or_else(|| Entry::from_path(&self.cwd));
                 if let Some(entry) = e {
@@ -1180,6 +1199,10 @@ impl App {
     fn item_menu(&self, ui: &mut egui::Ui, e: &Entry, acts: &mut Vec<Action>) {
         if ui.button(if e.is_dir { tr("📂 Abrir") } else { tr("↗ Abrir con la aplicación predeterminada") }).clicked() {
             acts.push(Action::Open(e.clone()));
+            ui.close_menu();
+        }
+        if ui.button(tr("👁 Vista rápida (Espacio)")).clicked() {
+            acts.push(Action::QuickLook);
             ui.close_menu();
         }
         if e.is_dir && ui.button(tr("🗂 Abrir en pestaña nueva")).clicked() {
@@ -1709,7 +1732,14 @@ impl App {
             return;
         }
         let typing = ctx.wants_keyboard_input();
+        let quick_open = self.quick.is_some();
         ctx.input_mut(|i| {
+            if !typing && i.consume_key(Modifiers::NONE, Key::Space) {
+                acts.push(Action::QuickLook);
+            }
+            if quick_open && i.consume_key(Modifiers::NONE, Key::Escape) {
+                acts.push(Action::CloseQuickLook);
+            }
             if i.consume_key(Modifiers::NONE, Key::F5) {
                 acts.push(Action::Refresh);
             }
@@ -1944,6 +1974,18 @@ impl eframe::App for App {
                     self.info(tr("Copiado al portapapeles"));
                 }
                 ToolEvent::Navigate(p) => acts.push(Action::Navigate(p)),
+            }
+        }
+
+        // Quick look follows the selection: one selected item shows, anything else keeps what is shown.
+        if self.quick.is_some() {
+            if let [e] = self.selected_entries().as_slice() {
+                if self.quick.as_ref().map(|q| q.path != e.path).unwrap_or(false) {
+                    self.quick = Some(quicklook::QuickLook::open(ctx, e));
+                }
+            }
+            if self.quick.as_ref().map(|q| !q.show(ctx)).unwrap_or(false) {
+                self.quick = None;
             }
         }
 

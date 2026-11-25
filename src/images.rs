@@ -191,7 +191,7 @@ fn is_image(p: &Path) -> bool {
 }
 
 /// Decodes the first picture of an AVIF/HEIC/HEIF file by asking FFmpeg for a temporary PNG.
-fn decode_with_ffmpeg(src: &Path) -> Result<DynamicImage, String> {
+pub(crate) fn decode_with_ffmpeg(src: &Path) -> Result<DynamicImage, String> {
     let ff = ffmpeg().ok_or_else(|| tr("Para leer AVIF y HEIC hace falta tener FFmpeg instalado").to_string())?;
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let tmp = std::env::temp_dir().join(format!("ficheron-{}-{}.png", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
