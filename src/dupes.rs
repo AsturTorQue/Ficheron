@@ -126,6 +126,20 @@ pub struct Dupes {
     problems: Vec<String>,
     base: PathBuf,
     collapsed: HashSet<usize>,
+    /// Bumped whenever groups, marks or folding change, so the numbers and rows derived from
+    /// them (70 000 files take a while to add up) are only recomputed then, not every frame.
+    rev: u64,
+    cache: Option<Cache>,
+}
+
+struct Cache {
+    key: (u64, String, bool, Vec<bool>),
+    wasted: u64,
+    copies: usize,
+    rows: Vec<(usize, Option<usize>)>,
+    marked_count: usize,
+    marked_bytes: u64,
+    skipped: usize,
 }
 
 impl Dupes {
@@ -166,6 +180,8 @@ impl Dupes {
             problems: vec![],
             base,
             collapsed: HashSet::new(),
+            rev: 0,
+            cache: None,
         }
     }
 
@@ -225,6 +241,7 @@ impl Dupes {
         self.groups.clear();
         self.marks.clear();
         self.collapsed.clear();
+        self.rev += 1;
         self.status = None;
         self.problems.clear();
         self.job = Some(Job { rx, progress, cancel, started: std::time::Instant::now() });
@@ -239,6 +256,7 @@ impl Dupes {
         match msg {
             Msg::Found(groups, errs, scanned) => {
                 self.groups = groups;
+                self.rev += 1;
                 self.scanned = scanned;
                 self.problems = errs;
                 let msg = if cancelled { tr("Búsqueda cancelada: se muestra lo encontrado hasta ahora").to_string() } else { trf!("Búsqueda terminada en {} s", format!("{secs:.1}")) };
@@ -253,6 +271,7 @@ impl Dupes {
                 }
                 self.groups.retain(|g| g.files.len() > 1);
                 self.marks.retain(|m| !gone.contains(m));
+                self.rev += 1;
                 self.problems = errs;
                 self.status = Some((msg, !self.problems.is_empty()));
                 events.push(ToolEvent::Reload);
@@ -266,6 +285,7 @@ impl Dupes {
 
     /// Marks every copy but one in each group (never files in reference folders).
     fn auto_mark(&mut self) {
+        self.rev += 1;
         self.marks.clear();
         for g in &self.groups {
             let has_ref = g.files.iter().any(|f| self.is_reference(f));
@@ -313,6 +333,7 @@ impl Dupes {
             _ => self.groups.sort_by_key(|g| g.files.first().and_then(|f| f.path.file_name()).map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default()),
         }
         self.collapsed.clear();
+        self.rev += 1;
     }
 
     fn run_action(&mut self, kind: u8) {
@@ -706,6 +727,43 @@ impl Dupes {
         }
     }
 
+    /// Recomputes the totals and the flattened row list only when something they depend on changed.
+    fn refresh_cache(&mut self) {
+        let key = (self.rev, self.filter.clone(), self.keep_one, self.roots.iter().map(|r| r.reference).collect::<Vec<_>>());
+        if self.cache.as_ref().map(|c| c.key == key).unwrap_or(false) {
+            return;
+        }
+        let q = self.filter.to_lowercase();
+        let mut rows: Vec<(usize, Option<usize>)> = Vec::with_capacity(self.groups.len() * 3);
+        for (gi, g) in self.groups.iter().enumerate() {
+            if !q.is_empty() && !g.files.iter().any(|f| f.path.to_string_lossy().to_lowercase().contains(&q)) {
+                continue;
+            }
+            rows.push((gi, None));
+            if !self.collapsed.contains(&gi) {
+                rows.extend((0..g.files.len()).map(|fi| (gi, Some(fi))));
+            }
+        }
+        // Counted in place: cloning 70 000 entries just to count them is what made this slow.
+        let (mut marked_count, mut marked_bytes) = (0usize, 0u64);
+        for g in self.groups.iter().filter(|g| !(self.keep_one && self.fully_marked(g))) {
+            for f in g.files.iter().filter(|f| self.marks.contains(&f.path) && !self.is_reference(f)) {
+                marked_count += 1;
+                marked_bytes += f.size;
+            }
+        }
+        let skipped = if self.keep_one { self.groups.iter().filter(|g| self.fully_marked(g)).count() } else { 0 };
+        self.cache = Some(Cache {
+            wasted: self.groups.iter().map(Group::wasted).sum(),
+            copies: self.groups.iter().map(|g| g.files.len() - 1).sum(),
+            rows,
+            marked_count,
+            marked_bytes,
+            skipped,
+            key,
+        });
+    }
+
     fn results_ui(&mut self, ui: &mut egui::Ui, events: &mut Vec<ToolEvent>) {
         if self.groups.is_empty() {
             if self.job.is_none() && self.status.is_some() {
@@ -713,8 +771,8 @@ impl Dupes {
             }
             return;
         }
-        let wasted: u64 = self.groups.iter().map(Group::wasted).sum();
-        let copies: usize = self.groups.iter().map(|g| g.files.len() - 1).sum();
+        self.refresh_cache();
+        let (wasted, copies) = self.cache.as_ref().map(|c| (c.wasted, c.copies)).unwrap_or_default();
         ui.separator();
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(trf!("{} grupos · {} copias de más · {} recuperables · {} archivos revisados", self.groups.len(), copies, human_size(wasted), self.scanned)).strong());
@@ -740,21 +798,15 @@ impl Dupes {
             }
             if ui.button(tr("Desmarcar todo")).clicked() {
                 self.marks.clear();
+                self.rev += 1;
             }
         });
 
-        // Flattened rows: a header per group, then its files.
-        let q = self.filter.to_lowercase();
-        let mut rows: Vec<(usize, Option<usize>)> = vec![];
-        for (gi, g) in self.groups.iter().enumerate() {
-            if !q.is_empty() && !g.files.iter().any(|f| f.path.to_string_lossy().to_lowercase().contains(&q)) {
-                continue;
-            }
-            rows.push((gi, None));
-            if !self.collapsed.contains(&gi) {
-                rows.extend((0..g.files.len()).map(|fi| (gi, Some(fi))));
-            }
-        }
+        self.refresh_cache();
+        let rows = self.cache.take().map(|mut c| (std::mem::take(&mut c.rows), c)).map(|(r, c)| {
+            self.cache = Some(c);
+            r
+        }).unwrap_or_default();
         let row_h = 22.0;
         let mut toggle_mark: Option<PathBuf> = None;
         let mut toggle_group = None;
@@ -808,28 +860,31 @@ impl Dupes {
             if !self.marks.remove(&p) {
                 self.marks.insert(p);
             }
+            self.rev += 1;
         }
         if let Some(g) = toggle_group {
             if !self.collapsed.remove(&g) {
                 self.collapsed.insert(g);
             }
+            self.rev += 1;
+        }
+        if let Some(c) = self.cache.as_mut() {
+            c.rows = rows;
         }
         if let Some(n) = nav {
             events.push(ToolEvent::Navigate(n));
         }
 
         // Actions on the marked copies.
-        let marked = self.marked_files();
-        let bytes: u64 = marked.iter().map(|f| f.size).sum();
+        let (marked_count, bytes, skipped) = self.cache.as_ref().map(|c| (c.marked_count, c.marked_bytes, c.skipped)).unwrap_or_default();
         let busy = self.job.is_some();
-        let skipped = if self.keep_one { self.groups.iter().filter(|g| self.fully_marked(g)).count() } else { 0 };
         ui.separator();
         if skipped > 0 {
             ui.label(RichText::new(trf!("⚠ {} grupo(s) tienen todas las copias marcadas: se omiten para no perder el archivo.", skipped)).small().color(theme::p().danger));
         }
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(trf!("{} marcado(s) · {}", marked.len(), human_size(bytes))).strong());
-            let any = !marked.is_empty() && !busy;
+            ui.label(RichText::new(trf!("{} marcado(s) · {}", marked_count, human_size(bytes))).strong());
+            let any = marked_count > 0 && !busy;
             if ui.add_enabled(any, egui::Button::new(RichText::new(tr("🗑 A la papelera")).color(Color32::WHITE)).fill(theme::p().danger)).clicked() {
                 self.run_action(0);
             }
@@ -852,15 +907,15 @@ impl Dupes {
                 let start = if start.is_dir() { start } else { dirs::home_dir().unwrap_or_else(|| self.base.clone()) };
                 self.browser = Some(Browser::new(start, 1));
             }
-            let ok = !marked.is_empty() && !busy && !self.move_dest.trim().is_empty();
+            let ok = marked_count > 0 && !busy && !self.move_dest.trim().is_empty();
             if ui.add_enabled(ok, egui::Button::new(tr("📦 Mover marcados a esa carpeta"))).clicked() {
                 self.run_action(2);
             }
             if ui.add_enabled(!busy, egui::Button::new(tr("💾 Exportar informe CSV"))).clicked() {
                 self.export_csv(events);
             }
-            if ui.add_enabled(!marked.is_empty(), egui::Button::new(tr("📋 Copiar rutas marcadas"))).clicked() {
-                events.push(ToolEvent::Clipboard(marked.iter().map(|f| f.path.to_string_lossy().to_string()).collect::<Vec<_>>().join("\n")));
+            if ui.add_enabled(marked_count > 0, egui::Button::new(tr("📋 Copiar rutas marcadas"))).clicked() {
+                events.push(ToolEvent::Clipboard(self.marked_files().iter().map(|f| f.path.to_string_lossy().to_string()).collect::<Vec<_>>().join("\n")));
             }
         });
     }
@@ -1245,6 +1300,29 @@ fn replace_with_hardlink(keep: &Path, dup: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn huge_result_sets_are_summarised_once_not_every_frame() {
+        let mut d = Dupes::new(vec![], PathBuf::from("/"));
+        d.roots = vec![Root { path: PathBuf::from("/a"), reference: false }];
+        d.groups = (0..35_000)
+            .map(|g| Group { files: (0..2).map(|k| FileInfo { path: PathBuf::from(format!("/a/{g}/copia{k}.bin")), size: 10, modified: None, root: 0 }).collect() })
+            .collect();
+        d.auto_mark();
+        let t = std::time::Instant::now();
+        d.refresh_cache();
+        let first = t.elapsed();
+        let c = d.cache.as_ref().unwrap();
+        assert_eq!((c.copies, c.wasted, c.marked_count, c.marked_bytes, c.skipped, c.rows.len()), (35_000, 350_000, 35_000, 350_000, 0, 105_000));
+        let t = std::time::Instant::now();
+        for _ in 0..100 {
+            d.refresh_cache();
+        }
+        assert!(t.elapsed() < first.max(std::time::Duration::from_millis(5)) * 3, "unchanged state must not be recomputed");
+        d.filter = "/a/123/".into();
+        d.refresh_cache();
+        assert_eq!(d.cache.as_ref().unwrap().rows.len(), 3, "a filter keeps only the matching groups");
+    }
+
     use super::*;
 
     #[test]
