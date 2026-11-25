@@ -319,6 +319,7 @@ pub struct Comparer {
     /// Where the list was scrolled to last frame, in pixels.
     offset: f32,
     offset_x: f32,
+    list_h: f32,
     viewport_h: f32,
     base: PathBuf,
 }
@@ -339,6 +340,7 @@ impl Comparer {
             scroll_to: None,
             offset: 0.0,
             offset_x: 0.0,
+            list_h: 400.0,
             viewport_h: 400.0,
             base,
         };
@@ -391,7 +393,15 @@ impl Comparer {
         });
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, _events: &mut Vec<ToolEvent>, selection: &[PathBuf], _cwd: &Path) {
+    /// The whole tool scrolls when the window is too short for the header plus a useful list;
+    /// the difference list inside it scrolls on its own.
+    pub fn ui(&mut self, ui: &mut egui::Ui, events: &mut Vec<ToolEvent>, selection: &[PathBuf], cwd: &Path) {
+        let total_h = ui.available_height();
+        self.list_h = (total_h - 215.0).max(320.0);
+        egui::ScrollArea::vertical().id_salt("compare_outer").max_height(total_h).auto_shrink([false, false]).show(ui, |ui| self.body(ui, events, selection, cwd));
+    }
+
+    fn body(&mut self, ui: &mut egui::Ui, _events: &mut Vec<ToolEvent>, selection: &[PathBuf], _cwd: &Path) {
         if let Some(rx) = &self.rx {
             if let Ok(o) = rx.try_recv() {
                 self.outcome = Some(o);
@@ -545,7 +555,7 @@ impl Comparer {
             }
         }
         // Names above each side.
-        let area_h = (ui.available_height() - 6.0).max(160.0);
+        let area_h = self.list_h + 22.0;
         let font = FontId::monospace(13.0);
         let (red, green) = (Color32::from_rgba_unmultiplied(220, 70, 60, 40), Color32::from_rgba_unmultiplied(60, 170, 90, 40));
         let (red_s, green_s) = (Color32::from_rgba_unmultiplied(220, 70, 60, 120), Color32::from_rgba_unmultiplied(60, 170, 90, 120));
@@ -656,7 +666,7 @@ impl Comparer {
                 }
             });
             if list.response.hovered() && max_hx > 0.0 {
-                let dx = ui.input(|i| i.smooth_scroll_delta.x);
+                let dx = ui.input(|i| i.smooth_scroll_delta.x + if i.modifiers.shift { i.smooth_scroll_delta.y } else { 0.0 });
                 self.offset_x = (self.offset_x - dx).clamp(0.0, max_hx);
             }
             // Overview strip: where the differences are in the whole file; click or drag to jump.
