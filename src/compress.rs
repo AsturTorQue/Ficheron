@@ -1722,7 +1722,8 @@ mod tests {
         assert_eq!(expand_name("{nombre}-{n}", "foto", "jpg", "carpeta", 3, now), "foto-3");
         assert_eq!(expand_name("a/b:{nombre}", "x", "", "", 1, now), "a-b-x");
         assert_eq!(parse_size("20 MB").unwrap(), Some(20 * 1024 * 1024));
-        let mut c = Compressor::new(vec![PathBuf::from("/tmp")], PathBuf::from("/tmp"));
+        let tmp = std::env::temp_dir();
+        let mut c = Compressor::new(vec![tmp.clone()], tmp);
         c.o.fmt = Fmt::Gz;
         assert!(c.validate().is_err(), "a folder can't go into a single-file format");
         c.o.fmt = Fmt::Zip;

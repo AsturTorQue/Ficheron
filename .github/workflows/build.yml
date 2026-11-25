@@ -42,7 +42,7 @@ jobs:
           cargo test --release 2>&1 | tee test.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            msg=$(grep -E "^error|panicked at|^---- |FAILED|left:|right:" -A2 test.log | head -40 | sed ':a;N;$!ba;s/\n/%0A/g')
+            msg=$(grep -E "^error|panicked at|^---- |FAILED|left:|right:" -A2 test.log | head -40 | tr '\n' '|')
             echo "::error title=Fallan las pruebas::$msg"
           fi
           exit $status

@@ -912,7 +912,7 @@ mod tests {
     }
 
     fn names(items: &[Item], root: &Path) -> Vec<String> {
-        let mut v: Vec<String> = items.iter().map(|i| i.path.strip_prefix(root).unwrap().to_string_lossy().to_string()).collect();
+        let mut v: Vec<String> = items.iter().map(|i| i.path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/")).collect();
         v.sort();
         v
     }
