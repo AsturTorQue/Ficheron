@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Ficherón
+GenericName=Administrador de archivos
+Comment=Administrador de archivos y utilidades para ficheros
+Exec=ficheron %F
+Icon=ficheron
+Terminal=false
+Categories=Utility;FileTools;FileManager;
+StartupWMClass=ficheron

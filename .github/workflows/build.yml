@@ -1,0 +1,96 @@
+name: Compilar y publicar
+
+# En cada subida a main se compila y se prueba en Linux, Windows y macOS.
+# Si la versión de Cargo.toml todavía no tiene release, se crea una (etiqueta vX.Y.Z)
+# con los programas empaquetados. Para sacar una versión nueva basta con subir el número
+# de `version` en Cargo.toml.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x86_64
+          - os: windows-latest
+            name: windows-x86_64
+          - os: macos-latest
+            name: macos-arm64
+          - os: macos-13
+            name: macos-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Librerías de escritorio (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev libvulkan-dev
+      - name: Pruebas
+        run: cargo test --release
+      - name: Compilar
+        run: cargo build --release
+      - name: Empaquetar (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p dist/ficheron
+          cp target/release/ficheron LICENSE README.md dist/ficheron/
+          cp -r assets packaging dist/ficheron/
+          tar -C dist -czf ficheron-${{ matrix.name }}.tar.gz ficheron
+      - name: Empaquetar (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p dist/ficheron
+          cp target/release/ficheron LICENSE README.md dist/ficheron/
+          cp -r assets dist/ficheron/
+          (cd dist && zip -r ../ficheron-${{ matrix.name }}.zip ficheron)
+      - name: Empaquetar (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/ficheron | Out-Null
+          Copy-Item target/release/ficheron.exe, LICENSE, README.md dist/ficheron/
+          Compress-Archive -Path dist/ficheron -DestinationPath ficheron-${{ matrix.name }}.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ficheron-${{ matrix.name }}
+          path: |
+            ficheron-${{ matrix.name }}.tar.gz
+            ficheron-${{ matrix.name }}.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artefactos
+          merge-multiple: true
+      - name: Crear la release si la versión es nueva
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          TAG="v$VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "La release $TAG ya existe; no se crea otra."
+            exit 0
+          fi
+          gh release create "$TAG" artefactos/* \
+            --target "$GITHUB_SHA" \
+            --title "Ficherón $VERSION" \
+            --generate-notes

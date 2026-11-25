@@ -1,0 +1,59 @@
+[package]
+name = "ficheron"
+version = "0.1.0"
+edition = "2021"
+description = "Ficherón: administrador de archivos y utilidades para ficheros"
+build = "build.rs"
+license = "MIT"
+repository = "https://github.com/AsturTorque/Ficheron"
+
+[dependencies]
+# Dos motores gráficos: OpenGL (glow) y wgpu. Si uno falla al arrancar se prueba el otro.
+eframe = { version = "0.31.1", features = ["wgpu"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "tiff", "webp", "ico", "avif"] }
+chrono = "0.4"
+dirs = "6"
+trash = "5"
+sha1 = "0.10"
+sha2 = "0.10"
+crc32fast = "1"
+regex = "1"
+unicode-normalization = "0.1"
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+kamadak-exif = "0.6"
+imagesize = "0.13"
+lofty = "0.22"
+eawk = "0.1"
+blake3 = "1"
+zip = { version = "9", default-features = false, features = ["deflate", "bzip2", "zstd", "lzma", "xz", "aes-crypto", "time"] }
+tar = "0.4"
+flate2 = "1"
+bzip2 = "0.6"
+zstd = "0.13"
+lzma-rust2 = "0.25"
+sevenz-rust2 = "0.25"
+chacha20poly1305 = { version = "0.10", features = ["stream"] }
+argon2 = "0.5"
+encoding_rs = "0.8"
+getrandom = "0.3"
+
+# eframe solo trae Metal y WebGPU en wgpu: sin esto, en Windows no había ningún controlador
+# gráfico de reserva. DirectX 12 incluye el dibujo por software de Windows (WARP), que
+# funciona en máquinas virtuales sin aceleración 3D.
+[target.'cfg(windows)'.dependencies]
+wgpu = { version = "24", default-features = false, features = ["dx12", "wgsl"] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+opt-level = 2
+
+# Paquete de macOS con cargo-bundle: `cargo bundle --release`
+[package.metadata.bundle]
+name = "Ficherón"
+identifier = "app.ficheron.desktop"
+icon = ["assets/icon-512.png", "assets/icon-256.png", "assets/icon-128.png", "assets/icon-32.png"]
+category = "public.app-category.utilities"
+short_description = "Administrador de archivos y utilidades para ficheros"
