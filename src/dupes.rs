@@ -984,7 +984,7 @@ impl Browser {
     }
 
     pub(crate) fn go(&mut self, p: PathBuf) {
-        let p = fs::canonicalize(&p).unwrap_or(p);
+        let p = crate::fsops::canonical(&p);
         let mut entries: Vec<(String, PathBuf)> = fs::read_dir(&p)
             .map(|rd| {
                 rd.flatten()

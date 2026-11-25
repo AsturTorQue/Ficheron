@@ -353,7 +353,7 @@ impl App {
             .unwrap_or_default();
 
         let cwd = start.filter(|p| p.is_dir()).or_else(dirs::home_dir).unwrap_or_else(|| PathBuf::from("/"));
-        let cwd = std::fs::canonicalize(&cwd).unwrap_or(cwd);
+        let cwd = fsops::canonical(&cwd);
         let recent: Vec<PathBuf> = recent_file()
             .and_then(|f| std::fs::read_to_string(f).ok())
             .map(|s| s.lines().filter(|l| !l.is_empty()).map(PathBuf::from).filter(|p| p.is_dir()).collect())
@@ -519,7 +519,7 @@ impl App {
     }
 
     fn navigate(&mut self, p: PathBuf) {
-        let p = std::fs::canonicalize(&p).unwrap_or(p);
+        let p = fsops::canonical(&p);
         if !p.is_dir() {
             self.error(trf!("«{}» no es una carpeta", p.display()));
             return;

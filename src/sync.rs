@@ -414,7 +414,7 @@ fn check_paths(o: &Opts) -> Result<(PathBuf, PathBuf), String> {
     if b.exists() && !b.is_dir() {
         return Err(trf!("«{}» no es una carpeta", b.display()));
     }
-    let (ca, cb) = (fs::canonicalize(&a).unwrap_or_else(|_| a.clone()), fs::canonicalize(&b).unwrap_or_else(|_| b.clone()));
+    let (ca, cb) = (crate::fsops::canonical(&a), crate::fsops::canonical(&b));
     if ca == cb || ca.starts_with(&cb) || cb.starts_with(&ca) {
         return Err(tr("Las dos carpetas no pueden ser la misma ni estar una dentro de la otra.").to_string());
     }

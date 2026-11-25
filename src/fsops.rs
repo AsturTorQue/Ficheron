@@ -227,6 +227,48 @@ pub fn dir_size(p: &Path, budget: &mut usize) -> (u64, usize) {
     (total, count)
 }
 
+/// Windows "verbatim" paths (`\\?\C:\dir`, `\\?\UNC\server\share`) written the way people
+/// know them (`C:\dir`, `\\server\share`). Other paths are returned unchanged.
+pub fn strip_verbatim(s: &str) -> String {
+    if let Some(r) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{r}")
+    } else if let Some(r) = s.strip_prefix(r"\\?\") {
+        // Only drive-letter paths: other verbatim forms (`\\?\Volume{…}`) have no plain spelling.
+        let b = r.as_bytes();
+        if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
+            r.to_string()
+        } else {
+            s.to_string()
+        }
+    } else {
+        s.to_string()
+    }
+}
+
+/// `fs::canonicalize` without the `\\?\` prefix Windows adds; the path itself if it can't be resolved.
+pub fn canonical(p: &Path) -> PathBuf {
+    let c = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    if cfg!(windows) {
+        PathBuf::from(strip_verbatim(&c.to_string_lossy()))
+    } else {
+        c
+    }
+}
+
+#[cfg(test)]
+mod verbatim_tests {
+    use super::*;
+
+    #[test]
+    fn verbatim_prefixes_are_removed() {
+        assert_eq!(strip_verbatim(r"\\?\C:\Users\ana"), r"C:\Users\ana");
+        assert_eq!(strip_verbatim(r"\\?\UNC\srv\share\a"), r"\\srv\share\a");
+        assert_eq!(strip_verbatim(r"\\?\Volume{1234}\x"), r"\\?\Volume{1234}\x");
+        assert_eq!(strip_verbatim(r"C:\ya\normal"), r"C:\ya\normal");
+        assert_eq!(strip_verbatim("/home/ana"), "/home/ana");
+    }
+}
+
 pub fn human_size(n: u64) -> String {
     const U: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut v = n as f64;

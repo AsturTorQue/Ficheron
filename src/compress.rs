@@ -817,7 +817,7 @@ impl Picker {
     }
 
     fn go(&mut self, p: PathBuf) {
-        let p = fs::canonicalize(&p).unwrap_or(p);
+        let p = crate::fsops::canonical(&p);
         let mut entries: Vec<(String, PathBuf, bool)> = fs::read_dir(&p)
             .map(|rd| rd.flatten().map(|e| (e.file_name().to_string_lossy().to_string(), e.path(), e.file_type().map(|t| t.is_dir()).unwrap_or(false))).collect())
             .unwrap_or_default();
