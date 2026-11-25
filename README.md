@@ -47,6 +47,9 @@ sin aceleración 3D. Se puede forzar con la variable `FICHERON_RENDERER=glow` o 
 
 ## Releases automáticas
 
+Para forzar una compilación sin tocar el código: en GitHub, pestaña **Actions › Compilar y publicar › Run workflow**.
+Marcando «Sustituir los archivos de la release de esta versión» se vuelven a subir los programas aunque la release ya exista.
+
 Cada subida a `main` compila y prueba el programa en Linux, Windows y macOS (Intel y Apple Silicon).
 Si el número de `version` de `Cargo.toml` aún no tiene release, se crea una (`vX.Y.Z`) con los paquetes
 para las tres plataformas. Para publicar una versión nueva, sube ese número y haz push.

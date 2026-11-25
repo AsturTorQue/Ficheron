@@ -4,11 +4,20 @@ name: Compilar y publicar
 # Si la versión de Cargo.toml todavía no tiene release, se crea una (etiqueta vX.Y.Z)
 # con los programas empaquetados. Para sacar una versión nueva basta con subir el número
 # de `version` en Cargo.toml.
+#
+# Para forzar una compilación a mano: pestaña Actions › «Compilar y publicar» › Run workflow.
+# Ahí se puede marcar «Sustituir los archivos de la release de esta versión» para que, aunque
+# la release ya exista, se vuelvan a subir los programas recién compilados.
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      reemplazar:
+        description: "Sustituir los archivos de la release de esta versión (aunque ya exista)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -96,7 +105,12 @@ jobs:
           VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
           TAG="v$VERSION"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "La release $TAG ya existe; no se crea otra."
+            if [ "${{ github.event.inputs.reemplazar }}" = "true" ]; then
+              echo "La release $TAG ya existe: se sustituyen sus archivos."
+              gh release upload "$TAG" artefactos/* --clobber
+            else
+              echo "La release $TAG ya existe; no se crea otra."
+            fi
             exit 0
           fi
           gh release create "$TAG" artefactos/* \
