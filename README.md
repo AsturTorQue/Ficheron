@@ -15,6 +15,7 @@ portugués y francés, con temas claro, oscuro y automático.
 - **Organizar por tipo o fecha**, **dividir y unir**, **borrar por patrón**, **eliminar carpetas vacías**, **destruir archivos**.
 - **Buscar texto** y **buscar y reemplazar** en muchos archivos.
 - **Imágenes**: convertir (PNG, JPEG, WebP, BMP, GIF, TIFF, AVIF), redimensionar, girar por EXIF.
+- **Metadatos**: ver y editar el EXIF de las fotos y las etiquetas de la música en lote, y quitar metadatos o la ubicación GPS.
 - **Cifrar y descifrar** (XChaCha20-Poly1305 + Argon2id).
 - **Texto**: saltos de línea, codificación, tabuladores y espacios sobrantes.
 - **Crear carpetas desde una lista**, sumas de verificación, cambiar fechas y atributos, crear enlaces…

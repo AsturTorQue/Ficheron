@@ -71,7 +71,7 @@ fn hash_file(p: &Path, on: [bool; 5], done: &AtomicU64, cancel: &AtomicBool) -> 
 }
 
 /// A fixed-width cell with its content on the left (`add_sized` would centre it).
-fn cell<R>(ui: &mut egui::Ui, w: f32, h: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+pub(crate) fn cell<R>(ui: &mut egui::Ui, w: f32, h: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.allocate_ui_with_layout(egui::vec2(w, h), egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.set_width(w);
         add(ui)
