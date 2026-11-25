@@ -543,7 +543,7 @@ impl TextConv {
         let dropped: Vec<PathBuf> = ui.ctx().input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
         self.add(dropped);
         let busy = self.job.is_some();
-        egui::ScrollArea::vertical().id_salt("textconv_all").auto_shrink([false, false]).max_height(840.0).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("textconv_all").auto_shrink([false, false]).max_height(ui.available_height() - 4.0).show(ui, |ui| {
             ui.add_enabled_ui(!busy, |ui| {
                 self.items_ui(ui, selection, cwd);
                 ui.separator();
@@ -687,7 +687,7 @@ impl TextConv {
             return;
         }
         ui.separator();
-        egui::ScrollArea::both().id_salt("textconv_res").max_height(300.0).auto_shrink([false, true]).show(ui, |ui| {
+        egui::ScrollArea::both().id_salt("textconv_res").max_height(crate::tools::grow(ui, 300.0)).auto_shrink([false, true]).show(ui, |ui| {
             egui::Grid::new("textconv_grid").striped(true).num_columns(8).spacing([14.0, 4.0]).show(ui, |ui| {
                 for h in ["Archivo", "Codificación", "Saltos", "Líneas", "Espacios al final", "Con tabuladores", "Final", "Estado"] {
                     ui.label(RichText::new(tr(h)).small().strong().color(theme::p().sub));

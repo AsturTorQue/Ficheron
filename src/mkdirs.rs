@@ -138,7 +138,7 @@ impl MakeFolders {
             Ok(rel) => {
                 ui.label(RichText::new(trf!("Vista previa: {} carpeta(s)", rel.len())).small().strong().color(theme::p().sub));
                 let base = self.dest.path();
-                egui::ScrollArea::vertical().id_salt("mk_prev").max_height(160.0).show(ui, |ui| {
+                egui::ScrollArea::vertical().id_salt("mk_prev").max_height(crate::tools::grow(ui, 160.0)).show(ui, |ui| {
                     for r in rel.iter().take(300) {
                         let depth = r.components().count().saturating_sub(1);
                         let exists = base.join(r).is_dir();

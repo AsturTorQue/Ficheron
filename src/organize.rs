@@ -506,7 +506,7 @@ impl Organizer {
     pub fn ui(&mut self, ui: &mut egui::Ui, events: &mut Vec<ToolEvent>, selection: &[PathBuf], cwd: &Path) {
         self.poll(events);
         let busy = self.job.is_some();
-        egui::ScrollArea::vertical().id_salt("organize_all").auto_shrink([false, false]).max_height(840.0).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("organize_all").auto_shrink([false, false]).max_height(ui.available_height() - 4.0).show(ui, |ui| {
             ui.add_enabled_ui(!busy, |ui| {
                 self.roots.ui(ui, selection, cwd, tr("CARPETAS A ORGANIZAR"));
                 ui.separator();
@@ -685,7 +685,7 @@ impl Organizer {
         let q = self.filter.to_lowercase();
         let view: Vec<usize> = plan.moves.iter().enumerate().filter(|(_, m)| q.is_empty() || m.from.to_string_lossy().to_lowercase().contains(&q) || m.folder.to_lowercase().contains(&q)).map(|(i, _)| i).collect();
         let mut toggles = vec![];
-        egui::ScrollArea::vertical().id_salt("organize_plan").max_height(260.0).auto_shrink([false, false]).show_rows(ui, 22.0, view.len(), |ui, range| {
+        egui::ScrollArea::vertical().id_salt("organize_plan").max_height(crate::tools::grow(ui, 260.0)).auto_shrink([false, false]).show_rows(ui, 22.0, view.len(), |ui, range| {
             for &i in &view[range] {
                 let m = &plan.moves[i];
                 ui.horizontal(|ui| {

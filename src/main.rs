@@ -345,6 +345,10 @@ fn section_title(ui: &mut egui::Ui, s: &str) {
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>, start: Option<PathBuf>, screenshot: Option<PathBuf>, open_rename: bool, open_dupes: bool, open_sync: bool, open_purge: bool, open_compress: bool, open_tool: Option<&'static str>) -> Self {
+        // Screenshots only see the main window, so tools are drawn inside it in that mode.
+        if screenshot.is_some() {
+            cc.egui_ctx.set_embed_viewports(true);
+        }
         theme::apply(&cc.egui_ctx);
         cc.egui_ctx.style_mut(|s| {
             s.spacing.item_spacing = egui::vec2(8.0, 6.0);

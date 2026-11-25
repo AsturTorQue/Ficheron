@@ -216,6 +216,12 @@ pub struct ToolWindow {
     status: Option<(String, bool)>,
 }
 
+/// A list height that grows with the window it is in (`base` at 800 px tall, up to three times
+/// that), so a tall tool window shows more rows instead of leaving blank space under the lists.
+pub fn grow(ui: &egui::Ui, base: f32) -> f32 {
+    base * (ui.ctx().screen_rect().height() / 800.0).clamp(1.0, 3.0)
+}
+
 impl ToolWindow {
     pub fn new(id: u64, kind: Kind, targets: Vec<PathBuf>, base: PathBuf) -> Self {
         let first_name = targets.first().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
@@ -329,18 +335,48 @@ impl ToolWindow {
 
     pub fn show(&mut self, ctx: &egui::Context, events: &mut Vec<ToolEvent>, selection: &[PathBuf], cwd: &Path) {
         self.poll(events);
-        let mut open = self.open;
         let title = format!("{}  {}", self.kind.icon(), self.kind.label());
-        let off = (self.id % 5) as f32 * 24.0;
         let big = matches!(self.kind, Kind::BatchRename | Kind::Duplicates | Kind::Sync | Kind::DeleteByMask | Kind::Compress | Kind::Extract | Kind::Organize | Kind::Grep | Kind::Images | Kind::Crypt | Kind::MakeFolders | Kind::TextConv | Kind::Replace);
-        egui::Window::new(title)
-            .id(egui::Id::new(("herramienta", self.id)))
-            .open(&mut open)
-            .collapsible(false)
-            .default_width(if big { 1060.0 } else { 560.0 })
-            .default_height(if big { 800.0 } else { 0.0 })
-            .default_pos(ctx.screen_rect().center() - if big { egui::vec2(530.0, 330.0) } else { egui::vec2(280.0 - off, 240.0 - off) })
-            .show(ctx, |ui| {
+        if ctx.embed_viewports() {
+            // No separate operating-system windows (screenshots, web): a window inside the main one.
+            let mut open = self.open;
+            let off = (self.id % 5) as f32 * 24.0;
+            egui::Window::new(title)
+                .id(egui::Id::new(("herramienta", self.id)))
+                .open(&mut open)
+                .collapsible(false)
+                .default_width(if big { 1060.0 } else { 560.0 })
+                .default_height(if big { 800.0 } else { 0.0 })
+                .default_pos(ctx.screen_rect().center() - if big { egui::vec2(530.0, 330.0) } else { egui::vec2(280.0 - off, 240.0 - off) })
+                .show(ctx, |ui| self.body(ctx, ui, events, selection, cwd, big));
+            self.open = open;
+        } else {
+            // Its own operating-system window, so it can be resized past the main window,
+            // moved to another screen and kept beside the file list.
+            let id = egui::ViewportId::from_hash_of(("herramienta", self.id));
+            let size = if big { [1060.0, 800.0] } else { [580.0, 540.0] };
+            let builder = egui::ViewportBuilder::default()
+                .with_title(title)
+                .with_app_id(crate::APP_ID)
+                .with_icon(std::sync::Arc::new(crate::icon::window_icon()))
+                .with_inner_size(size)
+                .with_min_inner_size([460.0, 320.0])
+                .with_resizable(true);
+            ctx.show_viewport_immediate(id, builder, |ctx, _class| {
+                egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::p().base).inner_margin(egui::Margin::symmetric(12, 10))).show(ctx, |ui| self.body(ctx, ui, events, selection, cwd, big));
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    self.open = false;
+                }
+            });
+        }
+        if !self.open {
+            if let Some(j) = &self.job {
+                j.cancel.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+
+    fn body(&mut self, ctx: &egui::Context, ui: &mut egui::Ui, events: &mut Vec<ToolEvent>, selection: &[PathBuf], cwd: &Path, big: bool) {
                 ui.label(RichText::new(self.kind.description()).color(theme::p().sub));
                 ui.add_space(4.0);
                 if !big {
@@ -449,13 +485,6 @@ impl ToolWindow {
                         });
                     });
                 }
-            });
-        self.open = open;
-        if !self.open {
-            if let Some(j) = &self.job {
-                j.cancel.store(true, Ordering::Relaxed);
-            }
-        }
     }
 
     pub fn dupes_demo(&mut self) {
@@ -628,7 +657,7 @@ impl ToolWindow {
         });
         if let Some(Out::Hashes(h)) = &self.out {
             let exp = self.expected.trim().to_lowercase();
-            egui::ScrollArea::vertical().max_height(240.0).id_salt("hashes").show(ui, |ui| {
+            egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 240.0)).id_salt("hashes").show(ui, |ui| {
                 egui::Grid::new("hash_tab").striped(true).num_columns(2).show(ui, |ui| {
                     for (p, v) in h {
                         let rel = p.strip_prefix(&self.base).unwrap_or(p).to_string_lossy().to_string();
@@ -694,7 +723,7 @@ impl ToolWindow {
         let first = parts[0].clone();
         let total: u64 = parts.iter().filter_map(|p| fs::metadata(p).ok()).map(|m| m.len()).sum();
         ui.label(trf!("{} partes, {} en total, en este orden:", parts.len(), human_size(total)));
-        egui::ScrollArea::vertical().max_height(150.0).id_salt("parts").show(ui, |ui| {
+        egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 150.0)).id_salt("parts").show(ui, |ui| {
             for p in &parts {
                 ui.label(RichText::new(p.file_name().unwrap_or_default().to_string_lossy()).small());
             }
@@ -751,7 +780,7 @@ impl ToolWindow {
         if paths.is_empty() {
             return;
         }
-        egui::ScrollArea::vertical().max_height(220.0).id_salt("paths").show(ui, |ui| {
+        egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 220.0)).id_salt("paths").show(ui, |ui| {
             for p in paths.iter().take(1000) {
                 let rel = p.strip_prefix(&self.base).unwrap_or(p).to_string_lossy().to_string();
                 ui.label(RichText::new(rel).small());
@@ -964,7 +993,7 @@ impl ToolWindow {
         if before != self.list_mode {
             self.rebuild_list();
         }
-        egui::ScrollArea::vertical().max_height(260.0).id_salt("lista").show(ui, |ui| {
+        egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 260.0)).id_salt("lista").show(ui, |ui| {
             ui.add(egui::TextEdit::multiline(&mut self.list_text).font(egui::TextStyle::Monospace).desired_width(f32::INFINITY).desired_rows(10));
         });
         ui.horizontal(|ui| {

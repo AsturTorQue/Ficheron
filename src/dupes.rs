@@ -658,7 +658,7 @@ impl Dupes {
                 }
             });
             ui.separator();
-            egui::ScrollArea::vertical().max_height(270.0).auto_shrink([false, false]).show(ui, |ui| {
+            egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 270.0)).auto_shrink([false, false]).show(ui, |ui| {
                 if b.entries.is_empty() {
                     ui.label(RichText::new(tr("No hay subcarpetas.")).color(theme::p().muted));
                 }
@@ -759,7 +759,7 @@ impl Dupes {
         let mut toggle_mark: Option<PathBuf> = None;
         let mut toggle_group = None;
         let mut nav = None;
-        egui::ScrollArea::vertical().id_salt("dup_res").max_height(260.0).auto_shrink([false, false]).show_rows(ui, row_h, rows.len(), |ui, range| {
+        egui::ScrollArea::vertical().id_salt("dup_res").max_height(crate::tools::grow(ui, 260.0)).auto_shrink([false, false]).show_rows(ui, row_h, rows.len(), |ui, range| {
             for &(gi, fi) in &rows[range] {
                 let g = &self.groups[gi];
                 let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), row_h), egui::Sense::click());

@@ -38,7 +38,7 @@ pub fn folder_window(ctx: &egui::Context, id: &str, slot: &mut Option<Browser>, 
             }
         });
         ui.separator();
-        egui::ScrollArea::vertical().max_height(270.0).auto_shrink([false, false]).show(ui, |ui| {
+        egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 270.0)).auto_shrink([false, false]).show(ui, |ui| {
             if b.entries.is_empty() {
                 ui.label(RichText::new(tr("No hay subcarpetas.")).color(theme::p().muted));
             }
@@ -242,7 +242,7 @@ pub fn picker_window(ctx: &egui::Context, id: &str, slot: &mut Option<Picker>) -
             }
         });
         ui.separator();
-        egui::ScrollArea::vertical().max_height(330.0).auto_shrink([false, false]).show(ui, |ui| {
+        egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 330.0)).auto_shrink([false, false]).show(ui, |ui| {
             let entries = pk.entries.clone();
             for (name, path, is_dir) in &entries {
                 ui.horizontal(|ui| {

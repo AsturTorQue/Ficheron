@@ -1166,7 +1166,7 @@ impl Renamer {
                 if self.history.is_empty() {
                     ui.label(tr("Todavía no se ha renombrado nada."));
                 }
-                egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 320.0)).show(ui, |ui| {
                     for (k, b) in self.history.iter().enumerate().rev() {
                         ui.horizontal(|ui| {
                             let first = b.pairs.first().map(|(o, n)| format!("{} » {}", o.file_name().unwrap_or_default().to_string_lossy(), n.file_name().unwrap_or_default().to_string_lossy())).unwrap_or_default();

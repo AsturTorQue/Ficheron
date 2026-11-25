@@ -594,7 +594,7 @@ impl Extractor {
         let dropped: Vec<PathBuf> = ui.ctx().input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
         self.add_items(dropped);
         let busy = self.job.is_some();
-        egui::ScrollArea::vertical().id_salt("extract_all").auto_shrink([false, false]).max_height(840.0).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("extract_all").auto_shrink([false, false]).max_height(ui.available_height() - 4.0).show(ui, |ui| {
             ui.add_enabled_ui(!busy, |ui| {
                 self.items_ui(ui, selection, cwd);
                 ui.separator();
@@ -745,7 +745,7 @@ impl Extractor {
                 Ok(items) => {
                     let total: u64 = items.iter().map(|i| i.size).sum();
                     ui.label(RichText::new(trf!("{} elementos · {} descomprimidos", items.len(), human_size(total))).small().color(theme::p().sub));
-                    egui::ScrollArea::vertical().id_salt("extract_listing").max_height(200.0).auto_shrink([false, true]).show_rows(ui, 18.0, items.len(), |ui, range| {
+                    egui::ScrollArea::vertical().id_salt("extract_listing").max_height(crate::tools::grow(ui, 200.0)).auto_shrink([false, true]).show_rows(ui, 18.0, items.len(), |ui, range| {
                         for it in &items[range] {
                             ui.horizontal(|ui| {
                                 ui.label(if it.is_dir { "📁" } else { "🗋" });
@@ -767,7 +767,7 @@ impl Extractor {
             return;
         }
         ui.separator();
-        egui::ScrollArea::vertical().id_salt("extract_res").max_height(220.0).auto_shrink([false, true]).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("extract_res").max_height(crate::tools::grow(ui, 220.0)).auto_shrink([false, true]).show(ui, |ui| {
             egui::Grid::new("extract_grid").striped(true).num_columns(4).spacing([14.0, 4.0]).show(ui, |ui| {
                 for r in &self.results {
                     ui.label(r.archive.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default());

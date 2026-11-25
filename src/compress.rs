@@ -984,7 +984,7 @@ impl Compressor {
         let dropped: Vec<PathBuf> = ui.ctx().input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
         self.add_items(dropped);
         let busy = self.job.is_some();
-        egui::ScrollArea::vertical().id_salt("comp_all").auto_shrink([false, false]).max_height(840.0).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("comp_all").auto_shrink([false, false]).max_height(ui.available_height() - 4.0).show(ui, |ui| {
             ui.add_enabled_ui(!busy, |ui| {
                 self.items_ui(ui, selection, cwd);
                 ui.separator();
@@ -1229,7 +1229,7 @@ impl Compressor {
             return;
         }
         ui.separator();
-        egui::ScrollArea::vertical().id_salt("comp_res").max_height(240.0).auto_shrink([false, true]).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("comp_res").max_height(crate::tools::grow(ui, 240.0)).auto_shrink([false, true]).show(ui, |ui| {
             egui::Grid::new("comp_grid").striped(true).num_columns(5).spacing([14.0, 4.0]).show(ui, |ui| {
                 for r in &self.results {
                     let name = r.out.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| r.label.clone());
@@ -1296,7 +1296,7 @@ impl Compressor {
                 }
             });
             ui.separator();
-            egui::ScrollArea::vertical().max_height(330.0).auto_shrink([false, false]).show(ui, |ui| {
+            egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 330.0)).auto_shrink([false, false]).show(ui, |ui| {
                 let all: Vec<PathBuf> = pk.entries.iter().map(|e| e.1.clone()).collect();
                 for (name, path, is_dir) in &pk.entries {
                     ui.horizontal(|ui| {
@@ -1368,7 +1368,7 @@ impl Compressor {
                 }
             });
             ui.separator();
-            egui::ScrollArea::vertical().max_height(300.0).auto_shrink([false, false]).show(ui, |ui| {
+            egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 300.0)).auto_shrink([false, false]).show(ui, |ui| {
                 if b.entries.is_empty() {
                     ui.label(RichText::new(tr("No hay subcarpetas.")).color(theme::p().muted));
                 }

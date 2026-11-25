@@ -320,7 +320,7 @@ impl Searcher {
     pub fn ui(&mut self, ui: &mut egui::Ui, events: &mut Vec<ToolEvent>, selection: &[PathBuf], cwd: &Path) {
         self.poll();
         let busy = self.job.is_some();
-        egui::ScrollArea::vertical().id_salt("grep_all").auto_shrink([false, false]).max_height(840.0).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("grep_all").auto_shrink([false, false]).max_height(ui.available_height() - 4.0).show(ui, |ui| {
             ui.add_enabled_ui(!busy, |ui| {
                 self.roots.ui(ui, selection, cwd, tr("CARPETAS DONDE BUSCAR"));
                 ui.separator();
@@ -446,7 +446,7 @@ impl Searcher {
         }
         let font = FontId::monospace(13.0);
         let (mut toggle, mut open, mut folder, mut copy) = (None, None, None, None);
-        egui::ScrollArea::vertical().id_salt("grep_rows").max_height(320.0).auto_shrink([false, false]).show_rows(ui, 22.0, rows.len(), |ui, range| {
+        egui::ScrollArea::vertical().id_salt("grep_rows").max_height(crate::tools::grow(ui, 320.0)).auto_shrink([false, false]).show_rows(ui, 22.0, rows.len(), |ui, range| {
             for &(fi, hi) in &rows[range] {
                 let f = &self.results[fi];
                 ui.horizontal(|ui| match hi {

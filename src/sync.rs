@@ -1043,7 +1043,7 @@ impl Syncer {
             }
         }
         let busy = self.job.is_some();
-        egui::ScrollArea::vertical().id_salt("sync_all").auto_shrink([false, false]).max_height(840.0).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("sync_all").auto_shrink([false, false]).max_height(ui.available_height() - 4.0).show(ui, |ui| {
             ui.add_enabled_ui(!busy, |ui| {
                 self.paths_ui(ui, selection, cwd);
                 ui.separator();
@@ -1356,7 +1356,7 @@ impl Syncer {
         let mut toggles: Vec<usize> = vec![];
         let mut resolve: Vec<(usize, bool)> = vec![];
         let two_way = self.o.mode == 3;
-        egui::ScrollArea::vertical().id_salt("sync_plan").max_height(260.0).auto_shrink([false, false]).show_rows(ui, row_h, view.len(), |ui, range| {
+        egui::ScrollArea::vertical().id_salt("sync_plan").max_height(crate::tools::grow(ui, 260.0)).auto_shrink([false, false]).show_rows(ui, row_h, view.len(), |ui, range| {
             for &i in &view[range] {
                 let op = &plan.ops[i];
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), row_h), egui::Sense::hover());
@@ -1436,7 +1436,7 @@ impl Syncer {
                 }
             });
             ui.separator();
-            egui::ScrollArea::vertical().max_height(270.0).auto_shrink([false, false]).show(ui, |ui| {
+            egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 270.0)).auto_shrink([false, false]).show(ui, |ui| {
                 if b.entries.is_empty() {
                     ui.label(RichText::new(tr("No hay subcarpetas.")).color(theme::p().muted));
                 }

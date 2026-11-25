@@ -524,7 +524,7 @@ impl Purge {
             self.add_root(p);
         }
         let busy = self.job.is_some();
-        egui::ScrollArea::vertical().id_salt("purge_all").auto_shrink([false, false]).max_height(840.0).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("purge_all").auto_shrink([false, false]).max_height(ui.available_height() - 4.0).show(ui, |ui| {
             ui.add_enabled_ui(!busy, |ui| {
                 self.roots_ui(ui, selection, cwd);
                 ui.separator();
@@ -753,7 +753,7 @@ impl Purge {
         let view: Vec<usize> = self.found.iter().enumerate().filter(|(_, i)| q.is_empty() || i.path.to_string_lossy().to_lowercase().contains(&q)).map(|(k, _)| k).collect();
         let row_h = 22.0;
         let mut toggles = vec![];
-        egui::ScrollArea::vertical().id_salt("purge_list").max_height(240.0).auto_shrink([false, false]).show_rows(ui, row_h, view.len(), |ui, range| {
+        egui::ScrollArea::vertical().id_salt("purge_list").max_height(crate::tools::grow(ui, 240.0)).auto_shrink([false, false]).show_rows(ui, row_h, view.len(), |ui, range| {
             for &k in &view[range] {
                 let it = &self.found[k];
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), row_h), egui::Sense::hover());
@@ -848,7 +848,7 @@ impl Purge {
                 }
             });
             ui.separator();
-            egui::ScrollArea::vertical().max_height(300.0).auto_shrink([false, false]).show(ui, |ui| {
+            egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 300.0)).auto_shrink([false, false]).show(ui, |ui| {
                 if b.entries.is_empty() {
                     ui.label(RichText::new(tr("No hay subcarpetas.")).color(theme::p().muted));
                 }
