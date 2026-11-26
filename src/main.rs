@@ -372,10 +372,16 @@ fn appearance_menu(ui: &mut egui::Ui) {
         if ui.button("−").on_hover_text(tip).clicked() {
             z -= 0.1;
         }
-        let mut pct = (z * 100.0).round();
-        if ui.add(egui::Slider::new(&mut pct, 50.0..=250.0).step_by(10.0).suffix(" %")).on_hover_text(tip).changed() {
-            z = pct / 100.0;
-        }
+        // A list of sizes instead of a slider: a slider moves under the pointer as the
+        // interface grows or shrinks, and the size kept changing by itself.
+        let pct = (z * 100.0).round() as u32;
+        egui::ComboBox::from_id_salt("escala").width(80.0).selected_text(format!("{pct} %")).show_ui(ui, |ui| {
+            for p in [50u32, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200, 250] {
+                if ui.selectable_label(p == pct, format!("{p} %")).clicked() {
+                    z = p as f32 / 100.0;
+                }
+            }
+        });
         if ui.button("+").on_hover_text(tip).clicked() {
             z += 0.1;
         }
