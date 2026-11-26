@@ -77,7 +77,7 @@ impl Kind {
             Kind::ChangeDate => tr("Cambiar fecha"),
             Kind::Attributes => tr("Atributos"),
             Kind::CopyList => tr("Árbol de carpetas y listados"),
-            Kind::PackToFolder => tr("Mover a una carpeta nueva"),
+            Kind::PackToFolder => tr("Repartir en carpetas"),
             Kind::Symlink => tr("Crear enlace"),
         }
     }
@@ -137,7 +137,7 @@ impl Kind {
             Kind::ChangeDate => tr("Cambia la fecha de modificación de los elementos."),
             Kind::Attributes => tr("Marca como solo lectura o ejecutable."),
             Kind::CopyList => tr("Muestra las carpetas como un árbol (o una lista de nombres o rutas) con sus totales: archivos, carpetas, tamaño y tipos. Cópialo o guárdalo."),
-            Kind::PackToFolder => tr("Crea una carpeta nueva junto a los elementos elegidos y los mueve dentro, de una vez. Por ejemplo, juntar varias fotos sueltas en «Vacaciones»."),
+            Kind::PackToFolder => tr("Mete archivos en carpetas nuevas: todos en una, una carpeta por archivo, agrupados por el principio del nombre o en lotes de N. Ves el resultado antes y puedes deshacerlo."),
             Kind::Symlink => tr("Crea un acceso directo (enlace simbólico) al elemento."),
         }
     }
@@ -215,6 +215,12 @@ pub struct ToolWindow {
     // listas
     // agrupar / enlace
     name: String,
+    pack_mode: crate::packdir::Mode,
+    pack_sep: String,
+    pack_batch: usize,
+    /// The last moves (from, to) and the folders they created, to undo them.
+    pack_undo: Vec<(PathBuf, PathBuf)>,
+    pack_made: Vec<PathBuf>,
     // resultados
     job: Option<Job>,
     errors: Vec<String>,
@@ -290,6 +296,11 @@ impl ToolWindow {
             date_text: now.format("%d/%m/%Y %H:%M").to_string(),
             readonly: false,
             executable: false,
+            pack_mode: crate::packdir::Mode::One,
+            pack_sep: "-".into(),
+            pack_batch: 50,
+            pack_undo: vec![],
+            pack_made: vec![],
             name: match kind {
                 Kind::PackToFolder => tr("Carpeta nueva").into(),
                 Kind::Symlink => trf!("{} - enlace", first_name),
@@ -944,43 +955,94 @@ impl ToolWindow {
     // ---------------- Listas, agrupar y enlaces ----------------
 
     fn ui_pack(&mut self, ui: &mut egui::Ui, events: &mut Vec<ToolEvent>) {
+        use crate::packdir::Mode;
+        if !self.pack_undo.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(trf!("Último movimiento: {} elemento(s)", self.pack_undo.len())).small().color(theme::p().sub));
+                if ui.button(tr("↶ Deshacer")).on_hover_text(tr("Vuelve a dejar cada elemento donde estaba y borra las carpetas creadas si quedan vacías")).clicked() {
+                    let mut errs = vec![];
+                    for (from, to) in self.pack_undo.drain(..).rev() {
+                        let back = if from.exists() { fsops::unique_name(from.parent().unwrap_or(&self.base), &from.file_name().unwrap_or_default().to_string_lossy()) } else { from.clone() };
+                        if let Err(e) = fsops::move_path(&to, &back) {
+                            errs.push(format!("{}: {e}", to.display()));
+                        }
+                    }
+                    for d in self.pack_made.drain(..).rev() {
+                        let _ = fs::remove_dir(&d);
+                    }
+                    self.set_status(if errs.is_empty() { tr("Deshecho").to_string() } else { trf!("{} error(es) al deshacer", errs.len()) }, !errs.is_empty());
+                    self.errors = errs;
+                    events.push(ToolEvent::Reload);
+                }
+            });
+        }
         if self.targets.is_empty() {
-            ui.label(tr("Selecciona los elementos que quieres agrupar."));
+            ui.label(tr("Elige con «Examinar» o selecciona los archivos que quieres repartir en carpetas."));
             return;
         }
-        ui.horizontal(|ui| {
-            crate::ui_kit::label(ui, tr("Nombre de la carpeta:").trim_end_matches([':', ' ']));
-            ui.text_edit_singleline(&mut self.name);
-        });
-        let bad = self.name.trim().is_empty() || self.name.contains('/') || self.name.contains('\\');
-        if !bad {
-            let dir = self.base.join(self.name.trim());
-            let what = if dir.is_dir() { tr("Ya existe: los elementos se moverán dentro de") } else { tr("Se creará la carpeta") };
-            ui.label(RichText::new(format!("{what} {}", dir.display())).small().color(theme::p().sub));
-        }
-        ui.collapsing(trf!("{} elemento(s) que se moverán", self.targets.len()), |ui| {
-            for p in self.targets.iter().take(200) {
-                ui.label(RichText::new(p.file_name().unwrap_or_default().to_string_lossy()).small()).on_hover_text(p.to_string_lossy());
+        ui.horizontal_wrapped(|ui| {
+            crate::ui_kit::label(ui, tr("Cómo"));
+            for m in Mode::ALL {
+                let (label, tip) = match m {
+                    Mode::One => (tr("Todos en una carpeta"), tr("Crea una carpeta y mete todo dentro.")),
+                    Mode::PerFile => (tr("Una carpeta por archivo"), tr("Cada archivo va a una carpeta con su nombre (sin extensión), como piden Plex, Jellyfin o Kodi para las películas.")),
+                    Mode::Common => (tr("Por nombre común"), tr("Junta los que empiezan igual antes del separador: «Serie - 01» y «Serie - 02» van a «Serie».")),
+                    Mode::Batches => (tr("En lotes"), tr("Reparte en carpetas de N archivos cada una (Parte 1, Parte 2…), por ejemplo para copiar a un USB o subir por partes.")),
+                };
+                ui.selectable_value(&mut self.pack_mode, m, label).on_hover_text(tip);
             }
         });
-        if !bad && self.run_button(ui, &trf!("Mover {} elemento(s) a «{}»", self.targets.len(), self.name.trim()), false) {
-            let dir = self.base.join(self.name.trim());
-            let mut errs = vec![];
-            if let Err(e) = fs::create_dir_all(&dir) {
-                errs.push(e.to_string());
-            } else {
-                for p in &self.targets {
-                    if p == &dir {
-                        continue;
-                    }
-                    let to = fsops::unique_name(&dir, &p.file_name().unwrap_or_default().to_string_lossy());
-                    if let Err(e) = fsops::move_path(p, &to) {
-                        errs.push(format!("{}: {e}", p.display()));
-                    }
+        ui.horizontal(|ui| match self.pack_mode {
+            Mode::One | Mode::Batches => {
+                crate::ui_kit::label(ui, if self.pack_mode == Mode::One { tr("Nombre de la carpeta:").trim_end_matches([':', ' ']) } else { tr("Nombre de los lotes") });
+                ui.text_edit_singleline(&mut self.name);
+                if self.pack_mode == Mode::Batches {
+                    ui.label(tr("Archivos por lote"));
+                    ui.add(egui::DragValue::new(&mut self.pack_batch).range(1..=100000));
                 }
             }
-            self.set_status(trf!("{} elemento(s) movidos a «{}»", self.targets.len() - errs.len(), self.name.trim()), false);
+            Mode::Common => {
+                crate::ui_kit::label(ui, tr("Separador"));
+                ui.add(egui::TextEdit::singleline(&mut self.pack_sep).desired_width(60.0).font(egui::TextStyle::Monospace)).on_hover_text(tr("Lo que va antes de este texto da el nombre de la carpeta"));
+            }
+            Mode::PerFile => {
+                ui.label(RichText::new(tr("Las carpetas se crean junto a cada archivo, con su nombre.")).small().color(theme::p().sub));
+            }
+        });
+        let bad_name = matches!(self.pack_mode, Mode::One) && (self.name.trim().is_empty() || self.name.contains('/') || self.name.contains('\\'));
+        let plan = if bad_name { vec![] } else { crate::packdir::plan(&self.targets, &self.base, self.pack_mode, &self.name, &self.pack_sep, self.pack_batch) };
+        let folders: std::collections::BTreeSet<&PathBuf> = plan.iter().map(|(_, d)| d).collect();
+        let new_folders = folders.iter().filter(|d| !d.is_dir()).count();
+        ui.label(RichText::new(trf!("{} elemento(s) ⏵ {} carpeta(s) ({} nuevas) · {} se quedan donde están", plan.len(), folders.len(), new_folders, self.targets.len() - plan.len())).strong());
+        egui::ScrollArea::vertical().id_salt("pack_plan").max_height(crate::tools::grow(ui, 180.0) - 40.0).auto_shrink([false, true]).show(ui, |ui| {
+            egui::Grid::new("pack_plan_grid").num_columns(2).striped(true).spacing([16.0, 2.0]).show(ui, |ui| {
+                for (p, d) in plan.iter().take(500) {
+                    ui.label(RichText::new(p.file_name().unwrap_or_default().to_string_lossy()).small()).on_hover_text(p.to_string_lossy());
+                    ui.label(RichText::new(format!("⏵ {}/", d.file_name().unwrap_or_default().to_string_lossy())).small().color(if d.is_dir() { theme::p().sub } else { theme::p().ok })).on_hover_text(d.to_string_lossy());
+                    ui.end_row();
+                }
+            });
+        });
+        if !plan.is_empty() && self.run_button(ui, &trf!("Mover {} elemento(s) a {} carpeta(s)", plan.len(), folders.len()), false) {
+            let (mut errs, mut moved, mut made) = (vec![], vec![], vec![]);
+            for (p, dir) in &plan {
+                if !dir.is_dir() {
+                    if let Err(e) = fs::create_dir_all(dir) {
+                        errs.push(format!("{}: {e}", dir.display()));
+                        continue;
+                    }
+                    made.push(dir.clone());
+                }
+                let to = fsops::unique_name(dir, &p.file_name().unwrap_or_default().to_string_lossy());
+                match fsops::move_path(p, &to) {
+                    Ok(()) => moved.push((p.clone(), to)),
+                    Err(e) => errs.push(format!("{}: {e}", p.display())),
+                }
+            }
+            self.set_status(trf!("{} elemento(s) movidos a {} carpeta(s)", moved.len(), folders.len()), !errs.is_empty());
             self.errors = errs;
+            self.pack_undo = moved;
+            self.pack_made = made;
             self.targets.clear();
             events.push(ToolEvent::Reload);
         }

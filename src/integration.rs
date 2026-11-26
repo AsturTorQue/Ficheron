@@ -14,7 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// The tools offered in the menu: (id used on the command line, tool).
-pub const TOOLS: [(&str, Kind); 12] = [
+pub const TOOLS: [(&str, Kind); 13] = [
     ("rename", Kind::BatchRename),
     ("compress", Kind::Compress),
     ("extract", Kind::Extract),
@@ -27,6 +27,7 @@ pub const TOOLS: [(&str, Kind); 12] = [
     ("grep", Kind::Grep),
     ("integrity", Kind::Integrity),
     ("tree", Kind::CopyList),
+    ("pack", Kind::PackToFolder),
 ];
 
 pub fn kind_of(id: &str) -> Option<Kind> {

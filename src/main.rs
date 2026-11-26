@@ -31,6 +31,7 @@ mod replace;
 mod roots;
 mod settings;
 mod sync;
+mod packdir;
 mod theme;
 mod tree;
 mod tools;
