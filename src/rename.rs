@@ -902,47 +902,7 @@ impl Renamer {
             ui.checkbox(&mut self.add_recursive, tr("Incluir subcarpetas"));
             ui.checkbox(&mut self.add_folders, tr("Añadir también las carpetas"));
         });
-        // 3. The list: order it and choose which of its items get renamed.
-        ui.horizontal_wrapped(|ui| {
-            row_label(ui, tr("LISTA"));
-            ui.menu_button(tr("Ordenar ⏷"), |ui| {
-                let mut sort = |ui: &mut egui::Ui, label: &str, f: &dyn Fn(&Item, &Item) -> std::cmp::Ordering| {
-                    if ui.button(label).clicked() {
-                        self.items.sort_by(|a, b| f(a, b));
-                        self.selected = None;
-                        ui.close_menu();
-                    }
-                };
-                sort(ui, tr("Por nombre (natural)"), &|a, b| natural_cmp(&a.name(), &b.name()));
-                sort(ui, tr("Por fecha de modificación"), &|a, b| mtime(a).cmp(&mtime(b)));
-                sort(ui, tr("Por tamaño"), &|a, b| size(a).cmp(&size(b)));
-                sort(ui, tr("Por extensión"), &|a, b| split(&a.name(), a.is_dir).1.to_lowercase().cmp(&split(&b.name(), b.is_dir).1.to_lowercase()).then(natural_cmp(&a.name(), &b.name())));
-                sort(ui, tr("Por carpeta"), &|a, b| a.path.cmp(&b.path));
-                if ui.button(tr("Invertir orden")).clicked() {
-                    self.items.reverse();
-                    ui.close_menu();
-                }
-            });
-            let sel = self.selected;
-            if ui.add_enabled(sel.map(|s| s > 0).unwrap_or(false), egui::Button::new("⬆")).on_hover_text(tr("Subir el elemento elegido")).clicked() {
-                let s = sel.unwrap();
-                self.items.swap(s, s - 1);
-                self.selected = Some(s - 1);
-            }
-            if ui.add_enabled(sel.map(|s| s + 1 < self.items.len()).unwrap_or(false), egui::Button::new("⬇")).on_hover_text(tr("Bajar el elemento elegido")).clicked() {
-                let s = sel.unwrap();
-                self.items.swap(s, s + 1);
-                self.selected = Some(s + 1);
-            }
-            if ui.add_enabled(sel.is_some(), egui::Button::new(tr("Quitar"))).on_hover_text(tr("Quitar de la lista (no borra el archivo)")).clicked() {
-                self.items.remove(sel.unwrap());
-                self.selected = None;
-            }
-            if ui.add_enabled(!self.items.is_empty(), egui::Button::new(tr("🧹 Vaciar lista"))).clicked() {
-                self.items.clear();
-                self.selected = None;
-            }
-        });
+        // 3. Right under the filter: which of the listed items get renamed.
         ui.horizontal_wrapped(|ui| {
             row_label(ui, tr("RENOMBRAR"));
             // 0: only the matches, 1: unmark the matches, 2: everything but the matches.
@@ -987,6 +947,47 @@ impl Renamer {
             } else if ok {
                 let n = self.items.iter().filter(|i| matches!(&m, Ok(Some(re)) if re.is_match(&i.name()))).count();
                 ui.label(RichText::new(trf!("{} coinciden", n)).small().color(theme::p().sub));
+            }
+        });
+        // 4. The list itself: order it, remove items.
+        ui.horizontal_wrapped(|ui| {
+            row_label(ui, tr("LISTA"));
+            ui.menu_button(tr("Ordenar ⏷"), |ui| {
+                let mut sort = |ui: &mut egui::Ui, label: &str, f: &dyn Fn(&Item, &Item) -> std::cmp::Ordering| {
+                    if ui.button(label).clicked() {
+                        self.items.sort_by(|a, b| f(a, b));
+                        self.selected = None;
+                        ui.close_menu();
+                    }
+                };
+                sort(ui, tr("Por nombre (natural)"), &|a, b| natural_cmp(&a.name(), &b.name()));
+                sort(ui, tr("Por fecha de modificación"), &|a, b| mtime(a).cmp(&mtime(b)));
+                sort(ui, tr("Por tamaño"), &|a, b| size(a).cmp(&size(b)));
+                sort(ui, tr("Por extensión"), &|a, b| split(&a.name(), a.is_dir).1.to_lowercase().cmp(&split(&b.name(), b.is_dir).1.to_lowercase()).then(natural_cmp(&a.name(), &b.name())));
+                sort(ui, tr("Por carpeta"), &|a, b| a.path.cmp(&b.path));
+                if ui.button(tr("Invertir orden")).clicked() {
+                    self.items.reverse();
+                    ui.close_menu();
+                }
+            });
+            let sel = self.selected;
+            if ui.add_enabled(sel.map(|s| s > 0).unwrap_or(false), egui::Button::new("⬆")).on_hover_text(tr("Subir el elemento elegido")).clicked() {
+                let s = sel.unwrap();
+                self.items.swap(s, s - 1);
+                self.selected = Some(s - 1);
+            }
+            if ui.add_enabled(sel.map(|s| s + 1 < self.items.len()).unwrap_or(false), egui::Button::new("⬇")).on_hover_text(tr("Bajar el elemento elegido")).clicked() {
+                let s = sel.unwrap();
+                self.items.swap(s, s + 1);
+                self.selected = Some(s + 1);
+            }
+            if ui.add_enabled(sel.is_some(), egui::Button::new(tr("Quitar"))).on_hover_text(tr("Quitar de la lista (no borra el archivo)")).clicked() {
+                self.items.remove(sel.unwrap());
+                self.selected = None;
+            }
+            if ui.add_enabled(!self.items.is_empty(), egui::Button::new(tr("🧹 Vaciar lista"))).clicked() {
+                self.items.clear();
+                self.selected = None;
             }
         });
         let hovering = ui.ctx().input(|i| !i.raw.hovered_files.is_empty());
