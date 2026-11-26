@@ -12,6 +12,7 @@ mod grep;
 mod images;
 mod icon;
 mod integration;
+mod integrity;
 mod checksum;
 mod compare;
 mod emptydirs;
@@ -85,7 +86,7 @@ fn main() -> eframe::Result<()> {
                 theme::set_theme(v.parse().unwrap_or(0));
             }
             i += 2;
-        } else if let Some(t) = ["--extract", "--organize", "--grep", "--images", "--crypt", "--mkdirs", "--text", "--replace", "--checksum", "--empty", "--meta", "--compare"].iter().find(|t| **t == args[i]) {
+        } else if let Some(t) = ["--extract", "--organize", "--grep", "--images", "--crypt", "--mkdirs", "--text", "--replace", "--checksum", "--empty", "--meta", "--compare", "--integrity"].iter().find(|t| **t == args[i]) {
             open_tool = Some(t);
             i += 1;
         } else if args[i] == "--compress" {
@@ -492,13 +493,14 @@ impl App {
                 "--empty" => Kind::RemoveEmpty,
                 "--meta" => Kind::Meta,
                 "--compare" => Kind::Compare,
+                "--integrity" => Kind::Integrity,
                 _ => Kind::Grep,
             };
             let mut t = ToolWindow::new(0, kind, vec![], app.cwd.clone());
             match kind {
                 Kind::Extract => t.extract_demo(&app.cwd),
                 Kind::Organize => t.organize_demo(&app.cwd),
-                Kind::Images | Kind::Crypt | Kind::MakeFolders | Kind::TextConv | Kind::Replace | Kind::Checksum | Kind::RemoveEmpty | Kind::Meta | Kind::Compare => t.new_demo(&app.cwd),
+                Kind::Images | Kind::Crypt | Kind::MakeFolders | Kind::TextConv | Kind::Replace | Kind::Checksum | Kind::RemoveEmpty | Kind::Meta | Kind::Compare | Kind::Integrity => t.new_demo(&app.cwd),
                 _ => t.grep_demo(&app.cwd, "mundo"),
             }
             app.tools.push(t);
