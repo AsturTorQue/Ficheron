@@ -55,6 +55,41 @@ pub fn installed() -> bool {
     platform::installed()
 }
 
+/// Wayland shows a window's icon from the desktop entry whose name matches the window's app id
+/// (`ficheron.desktop`). Writes that entry and the icon for the current user when they are
+/// missing or out of date, so the program's own icon shows without installing anything.
+pub fn ensure_desktop_entry() {
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let (Some(data), Ok(exe)) = (dirs::data_dir(), exe()) else { return };
+        let mut changed = false;
+        for s in [16u32, 32, 48, 64, 128, 256, 512] {
+            let p = data.join(format!("icons/hicolor/{s}x{s}/apps/ficheron.png"));
+            if !p.exists() {
+                if let Some(img) = image::RgbaImage::from_raw(s, s, crate::icon::rgba(s)) {
+                    let _ = fs::create_dir_all(p.parent().unwrap_or(&data));
+                    changed |= img.save(&p).is_ok();
+                }
+            }
+        }
+        let desktop = data.join("applications/ficheron.desktop");
+        let text = format!(
+            "[Desktop Entry]\nType=Application\nName=Ficherón\nGenericName={}\nComment={}\nExec=\"{}\" %F\nIcon=ficheron\nTerminal=false\nCategories=Utility;FileTools;FileManager;\nStartupWMClass=ficheron\n",
+            tr("Administrador de archivos"),
+            tr("Administrador de archivos y utilidades para ficheros"),
+            exe.display()
+        );
+        if fs::read_to_string(&desktop).ok().as_deref() != Some(text.as_str()) {
+            let _ = fs::create_dir_all(desktop.parent().unwrap_or(&data));
+            changed |= fs::write(&desktop, text).is_ok();
+        }
+        if changed {
+            let _ = std::process::Command::new("update-desktop-database").arg(data.join("applications")).status();
+            let _ = std::process::Command::new("gtk-update-icon-cache").args(["-q", "-t"]).arg(data.join("icons/hicolor")).status();
+        }
+    }
+}
+
 #[cfg(all(unix, not(target_os = "macos")))]
 mod platform {
     use super::*;

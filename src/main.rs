@@ -135,13 +135,18 @@ fn main() -> eframe::Result<()> {
         _ if cfg!(windows) => vec![eframe::Renderer::Wgpu, eframe::Renderer::Glow],
         _ => vec![eframe::Renderer::Glow, eframe::Renderer::Wgpu],
     };
+    // Opened from the system's right-click menu: the window is just that tool.
+    let launch_title = LAUNCH.get().map(|(k, _)| format!("{} — {APP_NAME}", k.label())).unwrap_or_else(|| APP_NAME.to_string());
+    if screenshot.is_none() {
+        integration::ensure_desktop_entry();
+    }
     let mut last: eframe::Result<()> = Ok(());
     for renderer in order {
         let mut viewport = egui::ViewportBuilder::default()
-            .with_title(APP_NAME)
+            .with_title(launch_title.clone())
             .with_app_id(APP_ID)
             .with_icon(std::sync::Arc::new(icon::window_icon()))
-            .with_inner_size([1240.0, 760.0])
+            .with_inner_size(if LAUNCH.get().is_some() { [1100.0, 820.0] } else { [1240.0, 760.0] })
             .with_min_inner_size([720.0, 440.0]);
         if screenshot.is_some() {
             viewport = viewport.with_active(false);
@@ -300,6 +305,8 @@ struct App {
     quick: Option<quicklook::QuickLook>,
     /// The «Menú contextual del sistema» window: open, and what the last action said.
     integration: Option<Option<(String, bool)>>,
+    /// Started for one tool from the system's right-click menu: the window shows only that tool.
+    solo: bool,
     /// Where the «Utilidades…» panel of the right-click menu is open.
     tool_picker: Option<egui::Pos2>,
     tools: Vec<ToolWindow>,
@@ -437,6 +444,7 @@ impl App {
             quick: None,
             integration: None,
             tool_picker: None,
+            solo: false,
             tools: vec![],
             next_tool: 1,
             screenshot,
@@ -450,6 +458,7 @@ impl App {
             app.selection = paths.iter().cloned().collect();
             app.tools.push(ToolWindow::new(app.next_tool, *kind, targets, app.cwd.clone()));
             app.next_tool += 1;
+            app.solo = true;
         }
         // For checking the «Utilidades…» panel in screenshots.
         if std::env::var("FICHERON_TOOLPICKER").is_ok() {
@@ -1102,6 +1111,47 @@ impl App {
         if ui.button(tr("🖱  Menú contextual del sistema…")).on_hover_text(tr("Añade las herramientas al clic derecho del explorador de archivos del sistema")).clicked() {
             acts.push(Action::Integration);
             ui.close_menu();
+        }
+    }
+
+    /// The window when Ficherón was opened for one tool: that tool alone, and a button to the explorer.
+    fn solo_update(&mut self, ctx: &egui::Context) {
+        let mut events = vec![];
+        let sel = self.selected_paths();
+        let cwd = self.cwd.clone();
+        let mut to_explorer = false;
+        egui::TopBottomPanel::top("solo_bar").frame(egui::Frame::new().fill(theme::p().bar).inner_margin(egui::Margin::symmetric(12, 6))).show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if let Some(t) = self.tools.first() {
+                    ui.label(RichText::new(format!("{}  {}", t.kind.icon(), t.kind.label())).strong().size(16.0));
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(tr("📂 Abrir el explorador de Ficherón")).on_hover_text(self.cwd.to_string_lossy()).clicked() {
+                        to_explorer = true;
+                    }
+                });
+            });
+        });
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::p().base).inner_margin(egui::Margin::symmetric(12, 8))).show(ctx, |ui| {
+            if let Some(t) = self.tools.first_mut() {
+                t.show_inline(ctx, ui, &mut events, &sel, &cwd);
+            }
+        });
+        for ev in events {
+            match ev {
+                ToolEvent::Reload => self.reload(),
+                ToolEvent::Clipboard(s) => ctx.copy_text(s),
+                ToolEvent::Navigate(p) => {
+                    to_explorer = true;
+                    self.navigate(p);
+                }
+            }
+        }
+        if to_explorer {
+            // The tool goes on as a window over the explorer.
+            self.solo = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(APP_NAME.into()));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1240.0, 760.0)));
         }
     }
 
@@ -2030,6 +2080,10 @@ impl eframe::App for App {
             theme::apply(ctx);
         }
         self.handle_screenshot(ctx);
+        if self.solo {
+            self.solo_update(ctx);
+            return;
+        }
         let mut acts: Vec<Action> = vec![];
         self.shortcuts(ctx, &mut acts);
         let bar = theme::p().bar;

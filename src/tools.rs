@@ -374,7 +374,7 @@ impl ToolWindow {
     pub fn show(&mut self, ctx: &egui::Context, events: &mut Vec<ToolEvent>, selection: &[PathBuf], cwd: &Path) {
         self.poll(events);
         let title = format!("{}  {}", self.kind.icon(), self.kind.label());
-        let big = matches!(self.kind, Kind::BatchRename | Kind::Duplicates | Kind::Sync | Kind::DeleteByMask | Kind::Compress | Kind::Extract | Kind::Organize | Kind::Grep | Kind::Images | Kind::Crypt | Kind::MakeFolders | Kind::TextConv | Kind::Replace | Kind::Checksum | Kind::RemoveEmpty | Kind::Meta | Kind::Compare);
+        let big = self.is_big();
         if embedded(ctx) {
             // No separate operating-system windows (screenshots, web): a window inside the main one.
             let mut open = self.open;
@@ -418,6 +418,17 @@ impl ToolWindow {
                 j.cancel.store(true, Ordering::Relaxed);
             }
         }
+    }
+
+    fn is_big(&self) -> bool {
+        matches!(self.kind, Kind::BatchRename | Kind::Duplicates | Kind::Sync | Kind::DeleteByMask | Kind::Compress | Kind::Extract | Kind::Organize | Kind::Grep | Kind::Images | Kind::Crypt | Kind::MakeFolders | Kind::TextConv | Kind::Replace | Kind::Checksum | Kind::RemoveEmpty | Kind::Meta | Kind::Compare)
+    }
+
+    /// The tool drawn straight into `ui`, filling it (when it is the whole program's window).
+    pub fn show_inline(&mut self, ctx: &egui::Context, ui: &mut egui::Ui, events: &mut Vec<ToolEvent>, selection: &[PathBuf], cwd: &Path) {
+        self.poll(events);
+        let big = self.is_big();
+        self.body(ctx, ui, events, selection, cwd, big);
     }
 
     fn body(&mut self, ctx: &egui::Context, ui: &mut egui::Ui, events: &mut Vec<ToolEvent>, selection: &[PathBuf], cwd: &Path, big: bool) {
