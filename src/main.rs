@@ -386,6 +386,15 @@ fn appearance_menu(ui: &mut egui::Ui) {
     }
 }
 
+/// Text laid out to fit `max_w`: up to `rows` lines, the rest cut with «…».
+fn fitted(ui: &egui::Ui, text: &str, size: f32, color: Color32, max_w: f32, rows: usize) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple(text.to_string(), FontId::proportional(size), color, max_w.max(10.0));
+    job.wrap.max_rows = rows;
+    job.wrap.break_anywhere = rows == 1;
+    job.wrap.overflow_character = Some('…');
+    ui.fonts(|f| f.layout_job(job))
+}
+
 fn section_title(ui: &mut egui::Ui, s: &str) {
     ui.label(RichText::new(s).small().strong().color(theme::p().sub));
 }
@@ -1370,7 +1379,9 @@ impl App {
         }
         let col = if active { theme::accent() } else { theme::p().text };
         painter.text(rect.left_center() + egui::vec2(8.0, 0.0), Align2::LEFT_CENTER, icon, FontId::proportional(15.0), col);
-        painter.text(rect.left_center() + egui::vec2(32.0, 0.0), Align2::LEFT_CENTER, name, FontId::proportional(14.0), col);
+        // Long names are cut with «…» instead of running out of the panel; the tooltip has the path.
+        let g = fitted(ui, name, 14.0, col, rect.width() - 38.0, 1);
+        ui.painter().galley(egui::pos2(rect.left() + 32.0, rect.center().y - g.size().y / 2.0), g, col);
         if resp.clicked() {
             acts.push(Action::Navigate(p.to_path_buf()));
         }
@@ -1544,7 +1555,7 @@ impl App {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show_rows(ui, row_h, n, |ui, range| {
             for i in range {
                 let e = &self.visible[i];
-                let (rect, resp) = ui.allocate_exact_size(egui::vec2(total_w, row_h), Sense::click());
+                let (rect, mut resp) = ui.allocate_exact_size(egui::vec2(total_w, row_h), Sense::click());
                 let selected = self.selection.contains(&e.path);
                 let painter = ui.painter_at(rect);
                 if selected {
@@ -1585,7 +1596,12 @@ impl App {
                     name.push_str("  ⤴");
                 }
                 let name_rect = egui::Rect::from_min_max(egui::pos2(x + 24.0, rect.top()), egui::pos2(x + name_w - 12.0, rect.bottom()));
-                ui.painter_at(name_rect).text(name_rect.left_center(), Align2::LEFT_CENTER, name, FontId::proportional(14.0), txt);
+                let g = fitted(ui, &name, 14.0, txt, name_rect.width(), 1);
+                let cut = g.rows.first().map(|r| r.ends_with_newline || g.rows.len() > 1).unwrap_or(false) || g.size().x >= name_rect.width() - 1.0;
+                ui.painter_at(name_rect).galley(egui::pos2(name_rect.left(), name_rect.center().y - g.size().y / 2.0), g, txt);
+                if cut {
+                    resp = resp.on_hover_text(&name);
+                }
                 x += name_w - 4.0;
                 let size = if e.is_dir { "—".to_string() } else { human_size(e.size) };
                 painter.text(egui::pos2(x, rect.center().y), Align2::LEFT_CENTER, size, FontId::proportional(13.0), sub);
@@ -1668,15 +1684,17 @@ impl App {
                 for k in kinds.iter().copied() {
                     let enabled = n > 0 || k.folder_ok();
                     let w = ui.available_width();
-                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 30.0), if enabled { Sense::click() } else { Sense::hover() });
+                    let col = if enabled { theme::p().text } else { theme::p().muted };
+                    let icol = if enabled { theme::accent() } else { theme::p().muted };
+                    // A long name goes on two lines (and is cut after that) instead of leaving the panel.
+                    let g = fitted(ui, k.label(), 14.0, col, w - 40.0, 2);
+                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, (g.size().y + 12.0).max(30.0)), if enabled { Sense::click() } else { Sense::hover() });
                     let p = ui.painter();
                     if enabled && resp.hovered() {
                         p.rect_filled(rect, 6.0, theme::accent().gamma_multiply(0.12));
                     }
-                    let col = if enabled { theme::p().text } else { theme::p().muted };
-                    let icol = if enabled { theme::accent() } else { theme::p().muted };
                     p.text(rect.left_center() + egui::vec2(8.0, 0.0), Align2::LEFT_CENTER, k.icon(), FontId::proportional(16.0), icol);
-                    p.text(rect.left_center() + egui::vec2(34.0, 0.0), Align2::LEFT_CENTER, k.label(), FontId::proportional(14.0), col);
+                    p.galley(egui::pos2(rect.left() + 34.0, rect.center().y - g.size().y / 2.0), g, col);
                     let resp = if enabled { resp.on_hover_text(k.description()) } else { resp.on_hover_text(trf!("{}\n\nSelecciona primero algún elemento.", k.description())) };
                     if resp.clicked() {
                         acts.push(Action::Tool(k));
@@ -2135,7 +2153,7 @@ impl eframe::App for App {
         if self.show_panel {
             egui::SidePanel::right("panel_derecho")
                 .resizable(true)
-                .default_width(250.0)
+                .default_width(280.0)
                 .width_range(210.0..=480.0)
                 .frame(egui::Frame::new().fill(theme::p().side2).inner_margin(10))
                 .show(ctx, |ui| {
