@@ -77,7 +77,7 @@ impl Kind {
             Kind::ChangeDate => tr("Cambiar fecha"),
             Kind::Attributes => tr("Atributos"),
             Kind::CopyList => tr("Árbol de carpetas y listados"),
-            Kind::PackToFolder => tr("Agrupar en carpeta"),
+            Kind::PackToFolder => tr("Mover a una carpeta nueva"),
             Kind::Symlink => tr("Crear enlace"),
         }
     }
@@ -137,7 +137,7 @@ impl Kind {
             Kind::ChangeDate => tr("Cambia la fecha de modificación de los elementos."),
             Kind::Attributes => tr("Marca como solo lectura o ejecutable."),
             Kind::CopyList => tr("Muestra las carpetas como un árbol (o una lista de nombres o rutas) con sus totales: archivos, carpetas, tamaño y tipos. Cópialo o guárdalo."),
-            Kind::PackToFolder => tr("Mueve los elementos seleccionados a una carpeta nueva."),
+            Kind::PackToFolder => tr("Crea una carpeta nueva junto a los elementos elegidos y los mueve dentro, de una vez. Por ejemplo, juntar varias fotos sueltas en «Vacaciones»."),
             Kind::Symlink => tr("Crea un acceso directo (enlace simbólico) al elemento."),
         }
     }
@@ -953,7 +953,17 @@ impl ToolWindow {
             ui.text_edit_singleline(&mut self.name);
         });
         let bad = self.name.trim().is_empty() || self.name.contains('/') || self.name.contains('\\');
-        if !bad && self.run_button(ui, tr("Agrupar"), false) {
+        if !bad {
+            let dir = self.base.join(self.name.trim());
+            let what = if dir.is_dir() { tr("Ya existe: los elementos se moverán dentro de") } else { tr("Se creará la carpeta") };
+            ui.label(RichText::new(format!("{what} {}", dir.display())).small().color(theme::p().sub));
+        }
+        ui.collapsing(trf!("{} elemento(s) que se moverán", self.targets.len()), |ui| {
+            for p in self.targets.iter().take(200) {
+                ui.label(RichText::new(p.file_name().unwrap_or_default().to_string_lossy()).small()).on_hover_text(p.to_string_lossy());
+            }
+        });
+        if !bad && self.run_button(ui, &trf!("Mover {} elemento(s) a «{}»", self.targets.len(), self.name.trim()), false) {
             let dir = self.base.join(self.name.trim());
             let mut errs = vec![];
             if let Err(e) = fs::create_dir_all(&dir) {
