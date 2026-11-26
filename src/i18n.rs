@@ -1714,6 +1714,8 @@ static TABLE: &[[&str; 4]] = &[
     ["No se pudo quitar: {}", "Couldn't remove it: {}", "Não foi possível remover: {}", "Impossible de retirer : {}"],
     ["No se encuentra la carpeta personal", "The home folder can't be found", "Não se encontra a pasta pessoal", "Dossier personnel introuvable"],
     ["🔧 Utilidades…", "🔧 Tools…", "🔧 Utilitários…", "🔧 Outils…"],
+    ["Herramientas en ventanas aparte", "Tools in separate windows", "Ferramentas em janelas à parte", "Outils dans des fenêtres séparées"],
+    ["Cada herramienta en su propia ventana, que se puede agrandar más que la principal y llevar a otra pantalla. Desmarcado: se abren dentro de la ventana principal, siempre por delante.", "Each tool in its own window, which can be bigger than the main one and moved to another screen. Unticked: they open inside the main window, always in front.", "Cada ferramenta na sua própria janela, que pode ser maior que a principal e ir para outro ecrã. Desmarcado: abrem dentro da janela principal, sempre à frente.", "Chaque outil dans sa propre fenêtre, plus grande que la principale et déplaçable sur un autre écran. Décoché : ils s'ouvrent dans la fenêtre principale, toujours devant."],
     ["Duplicar pestaña", "Duplicate tab", "Duplicar separador", "Dupliquer l'onglet"],
     ["… (solo se muestra el principio)", "… (only the beginning is shown)", "… (só se mostra o início)", "… (seul le début est affiché)"],
     ["… y {} más", "… and {} more", "… e mais {}", "… et {} de plus"],

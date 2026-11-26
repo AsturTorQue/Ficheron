@@ -561,7 +561,7 @@ impl Comparer {
         let (red_s, green_s) = (Color32::from_rgba_unmultiplied(220, 70, 60, 120), Color32::from_rgba_unmultiplied(60, 170, 90, 120));
         let mini_w = 18.0;
         // A window inside the main one grows with its content, so give it a ceiling there.
-        let full_w = if ctx.embed_viewports() { ui.available_width().min(1040.0) } else { ui.available_width() };
+        let full_w = if crate::tools::embedded(&ctx) { ui.available_width().min(1040.0) } else { ui.available_width() };
         let list_w = full_w - mini_w - 6.0;
         // Both sides stay on screen: a line longer than a side is shown by scrolling the text of
         // both sides together (slider under the list, or Shift + mouse wheel).

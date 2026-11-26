@@ -2,6 +2,20 @@
 
 use crate::{i18n, theme};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Tools open in windows of their own (true) or inside the main window (false). Inside is the
+/// default on Linux, where many desktops open a new window behind the one that asked for it.
+static SEPARATE: AtomicBool = AtomicBool::new(!cfg!(target_os = "linux"));
+
+pub fn separate_windows() -> bool {
+    SEPARATE.load(Ordering::Relaxed)
+}
+
+pub fn set_separate_windows(on: bool) {
+    SEPARATE.store(on, Ordering::Relaxed);
+    save();
+}
 
 fn file() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("utilidades-de-archivos").join("ajustes.txt"))
@@ -17,6 +31,7 @@ pub fn load() {
             "idioma" => lang = i18n::LANGS.iter().position(|(code, _)| *code == v),
             "tema" => theme::set_theme(v.parse().unwrap_or(0)),
             "acento" => theme::set_accent(v.parse().unwrap_or(0)),
+            "ventanas_aparte" => SEPARATE.store(v == "1", Ordering::Relaxed),
             _ => {}
         }
     }
@@ -28,6 +43,6 @@ pub fn save() {
     if let Some(d) = f.parent() {
         let _ = std::fs::create_dir_all(d);
     }
-    let s = format!("idioma={}\ntema={}\nacento={}\n", i18n::LANGS[i18n::lang()].0, theme::theme_index(), theme::accent_index());
+    let s = format!("idioma={}\ntema={}\nacento={}\nventanas_aparte={}\n", i18n::LANGS[i18n::lang()].0, theme::theme_index(), theme::accent_index(), separate_windows() as u8);
     let _ = std::fs::write(f, s);
 }

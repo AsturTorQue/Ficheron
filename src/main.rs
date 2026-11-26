@@ -353,6 +353,11 @@ fn appearance_menu(ui: &mut egui::Ui) {
         });
     }
     ui.separator();
+    let mut sep = settings::separate_windows();
+    if ui.checkbox(&mut sep, tr("Herramientas en ventanas aparte")).on_hover_text(tr("Cada herramienta en su propia ventana, que se puede agrandar más que la principal y llevar a otra pantalla. Desmarcado: se abren dentro de la ventana principal, siempre por delante.")).changed() {
+        settings::set_separate_windows(sep);
+    }
+    ui.separator();
     ui.label(RichText::new(tr("Color de acento")).small().color(theme::p().sub));
     ui.horizontal_wrapped(|ui| {
         for (i, (name, c)) in theme::ACCENTS.iter().enumerate() {

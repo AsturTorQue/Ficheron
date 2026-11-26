@@ -166,6 +166,8 @@ struct Job {
 }
 
 pub struct ToolWindow {
+    /// Frames this tool has been on screen as its own window (to bring it forward at first).
+    frames_shown: u32,
     pub id: u64,
     pub kind: Kind,
     pub targets: Vec<PathBuf>,
@@ -234,6 +236,11 @@ impl ViewCache {
     }
 }
 
+/// Whether tools are drawn as windows inside the main one (screenshots, or the person's choice).
+pub fn embedded(ctx: &egui::Context) -> bool {
+    ctx.embed_viewports() || !crate::settings::separate_windows()
+}
+
 /// A list height that grows with the window it is in (`base` at 800 px tall, up to three times
 /// that), so a tall tool window shows more rows instead of leaving blank space under the lists.
 pub fn grow(ui: &egui::Ui, base: f32) -> f32 {
@@ -245,6 +252,7 @@ impl ToolWindow {
         let first_name = targets.first().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let now: chrono::DateTime<chrono::Local> = SystemTime::now().into();
         let mut t = ToolWindow {
+            frames_shown: 0,
             id,
             kind,
             base,
@@ -367,7 +375,7 @@ impl ToolWindow {
         self.poll(events);
         let title = format!("{}  {}", self.kind.icon(), self.kind.label());
         let big = matches!(self.kind, Kind::BatchRename | Kind::Duplicates | Kind::Sync | Kind::DeleteByMask | Kind::Compress | Kind::Extract | Kind::Organize | Kind::Grep | Kind::Images | Kind::Crypt | Kind::MakeFolders | Kind::TextConv | Kind::Replace | Kind::Checksum | Kind::RemoveEmpty | Kind::Meta | Kind::Compare);
-        if ctx.embed_viewports() {
+        if embedded(ctx) {
             // No separate operating-system windows (screenshots, web): a window inside the main one.
             let mut open = self.open;
             let off = (self.id % 5) as f32 * 24.0;
@@ -392,7 +400,13 @@ impl ToolWindow {
                 .with_inner_size(size)
                 .with_min_inner_size([460.0, 320.0])
                 .with_resizable(true);
+            let first_frames = self.frames_shown < 3;
+            self.frames_shown += 1;
             ctx.show_viewport_immediate(id, builder, |ctx, _class| {
+                // Bring the new window to the front: some desktops open it behind the main one.
+                if first_frames {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
                 egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::p().base).inner_margin(egui::Margin::symmetric(12, 10))).show(ctx, |ui| self.body(ctx, ui, events, selection, cwd, big));
                 if ctx.input(|i| i.viewport().close_requested()) {
                     self.open = false;
