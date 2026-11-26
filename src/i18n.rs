@@ -1704,6 +1704,8 @@ static TABLE: &[[&str; 4]] = &[
     ["Desmarca los que coinciden con el filtro; el resto se queda como está", "Untick the ones matching the filter; the rest stay as they are", "Desmarca os que correspondem ao filtro; o resto fica como está", "Décoche ceux qui correspondent au filtre ; le reste ne change pas"],
     ["Desmarca todos: no se renombra nada hasta que marques alguno", "Untick all: nothing is renamed until you tick some", "Desmarca todos: nada é renomeado até marcares algum", "Tout décocher : rien n'est renommé tant que vous n'en cochez pas"],
     ["Ninguno", "None", "Nenhum", "Aucun"],
+    ["Copiar nombre actual", "Copy current name", "Copiar nome atual", "Copier le nom actuel"],
+    ["Copiar nombre nuevo", "Copy new name", "Copiar nome novo", "Copier le nouveau nom"],
     ["Los marcados pasan a desmarcados y al revés (no usa el filtro)", "Ticked become unticked and the other way round (doesn't use the filter)", "Os marcados passam a desmarcados e vice-versa (não usa o filtro)", "Les cochés deviennent décochés et inversement (sans le filtre)"],
     ["Al añadir una carpeta solo entra lo que coincide. Con «Solo estos» o «Excluir estos» se aplica también a lo que ya está en la lista.", "When adding a folder only what matches comes in. «Only these» or «Exclude these» also apply it to what is already in the list.", "Ao adicionar uma pasta só entra o que corresponde. Com «Só estes» ou «Excluir estes» aplica-se também ao que já está na lista.", "En ajoutant un dossier, seul ce qui correspond entre. «Seulement ceux-ci» ou «Exclure ceux-ci» l'appliquent aussi à ce qui est déjà dans la liste."],
     ["Aplicar a", "Apply to", "Aplicar a", "Appliquer à"],

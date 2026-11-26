@@ -1247,10 +1247,26 @@ impl Renamer {
                         Status::Conflict(w) => (theme::p().danger, format!("⚠ {w}")),
                         Status::Invalid(w) => (theme::p().danger, format!("⛔ {w}")),
                     };
-                    crate::checksum::cell(&mut child, c0 - 4.0, row_h, |ui| ui.add(egui::Label::new(RichText::new(format!("{icon}{}", it.name())).color(old_col)).truncate()).on_hover_text(it.path.to_string_lossy()));
-                    crate::checksum::cell(&mut child, c1, row_h, |ui| ui.add(egui::Label::new(RichText::new(&it.new).color(new_col)).truncate()));
-                    child.add(egui::Label::new(RichText::new(st).small().color(new_col)).truncate());
-                    if resp.clicked() {
+                    crate::checksum::cell(&mut child, c0 - 4.0, row_h, |ui| ui.add(egui::Label::new(RichText::new(format!("{icon}{}", it.name())).color(old_col)).truncate().selectable(false)).on_hover_text(it.path.to_string_lossy()));
+                    crate::checksum::cell(&mut child, c1, row_h, |ui| ui.add(egui::Label::new(RichText::new(&it.new).color(new_col)).truncate().selectable(false)));
+                    child.add(egui::Label::new(RichText::new(st).small().color(new_col)).truncate().selectable(false));
+                    // A click only picks the row (to move it up or down); copying the text is in
+                    // the right-click menu.
+                    resp.context_menu(|ui| {
+                        if ui.button(tr("Copiar nombre actual")).clicked() {
+                            ui.ctx().copy_text(it.name().to_string());
+                            ui.close_menu();
+                        }
+                        if ui.button(tr("Copiar nombre nuevo")).clicked() {
+                            ui.ctx().copy_text(it.new.clone());
+                            ui.close_menu();
+                        }
+                        if ui.button(tr("Copiar ruta")).clicked() {
+                            ui.ctx().copy_text(it.path.to_string_lossy().to_string());
+                            ui.close_menu();
+                        }
+                    });
+                    if resp.clicked() || (resp.secondary_clicked() && !selected) {
                         clicked = Some(i);
                     }
                 }
