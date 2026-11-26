@@ -847,7 +847,8 @@ impl Renamer {
             self.status = Some((trf!("{} elemento(s) añadidos", n), false));
         }
         ui.separator();
-        let h = 440.0;
+        // The rules and the preview fill the window's height (and scroll inside it).
+        let h = (ui.available_height() - 52.0).clamp(260.0, 2000.0);
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(egui::vec2(470.0, h), egui::Layout::top_down(egui::Align::Min), |ui| {
                 ui.set_min_size(egui::vec2(470.0, h));
@@ -995,7 +996,7 @@ impl Renamer {
                     ui.set_min_width(260.0);
                     let all = RuleKind::all_defaults();
                     // Grouped by what they do; the order inside each group is the most used first.
-                    for (group, idx) in [("AÑADIR", &[0usize, 1, 2, 5, 3][..]), ("CAMBIAR", &[4, 7, 17, 12, 9][..]), ("QUITAR Y LIMPIAR", &[8, 6, 10, 13, 11][..]), ("AVANZADO", &[14, 15, 16][..])] {
+                    for (group, idx) in [("AÑADIR", &[3usize, 0, 1, 2, 5][..]), ("CAMBIAR", &[4, 7, 17, 12, 9][..]), ("QUITAR Y LIMPIAR", &[8, 6, 10, 13, 11][..]), ("AVANZADO", &[14, 15, 16][..])] {
                         ui.label(RichText::new(tr(group)).small().strong().color(theme::p().sub));
                         for &n in idx {
                             let k = &all[n];
@@ -1171,56 +1172,58 @@ impl Renamer {
             }
         });
         let w = ui.available_width();
-        let col = ((w - 28.0 - 150.0) / 2.0).max(120.0);
-        ui.horizontal(|ui| {
-            ui.add_space(26.0);
-            for t in [tr("Nombre actual"), tr("Nombre nuevo")] {
-                ui.allocate_ui_with_layout(egui::vec2(col, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.set_width(col);
-                    ui.label(RichText::new(t).small().color(theme::p().sub));
-                });
-            }
-            ui.label(RichText::new(tr("Estado")).small().color(theme::p().sub));
-        });
-        let row_h = 22.0;
+        // Each row shows the current name (small) above the new one, both full width, so long names
+        // fit; if one is longer still, the list scrolls sideways instead of cutting it.
+        let longest = self.items.iter().map(|i| i.name().chars().count().max(i.new.chars().count())).max().unwrap_or(0);
+        let status_w = 170.0;
+        let col = (w - 30.0 - status_w).max(200.0).max((longest as f32 * 8.0 + 30.0).min(2400.0));
+        let list_h = (ui.available_height() - 24.0).max(120.0);
+        let row_h = 38.0;
         let mut toggles = vec![];
         let mut clicked = None;
-        egui::ScrollArea::vertical().id_salt("vista_ren").auto_shrink([false, false]).show_rows(ui, row_h, self.items.len(), |ui, range| {
-            for i in range {
-                let it = &self.items[i];
-                let selected = self.selected == Some(i);
-                let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), row_h), egui::Sense::click());
-                if selected {
-                    ui.painter().rect_filled(rect, 4.0, theme::accent().gamma_multiply(0.25));
-                } else if i % 2 == 1 {
-                    ui.painter().rect_filled(rect, 0.0, theme::p().stripe);
+        egui::ScrollArea::horizontal().id_salt("vista_ren_h").auto_shrink([false, false]).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.add_space(28.0);
+                crate::checksum::cell(ui, col, 18.0, |ui| ui.label(RichText::new(tr("Nombre actual » nombre nuevo")).small().color(theme::p().sub)));
+                ui.label(RichText::new(tr("Estado")).small().color(theme::p().sub));
+            });
+            egui::ScrollArea::vertical().id_salt("vista_ren").max_height(list_h).auto_shrink([false, false]).show_rows(ui, row_h, self.items.len(), |ui, range| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for i in range {
+                    let it = &self.items[i];
+                    let selected = self.selected == Some(i);
+                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(28.0 + col + status_w, row_h), egui::Sense::click());
+                    if selected {
+                        ui.painter().rect_filled(rect, 4.0, theme::accent().gamma_multiply(0.25));
+                    } else if i % 2 == 1 {
+                        ui.painter().rect_filled(rect, 0.0, theme::p().stripe);
+                    }
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::left_to_right(egui::Align::Center)));
+                    let mut on = it.on;
+                    if child.checkbox(&mut on, "").changed() {
+                        toggles.push(i);
+                    }
+                    let icon = if it.is_dir { "📁 " } else { "" };
+                    let old_col = if it.on { theme::p().sub } else { theme::p().muted };
+                    let (new_col, st) = match &it.status {
+                        Status::Unchanged => (theme::p().muted, if it.on { tr("sin cambios").to_string() } else { tr("excluido").to_string() }),
+                        Status::Ok => (theme::p().ok, "✔".to_string()),
+                        Status::Conflict(w) => (theme::p().danger, format!("⚠ {w}")),
+                        Status::Invalid(w) => (theme::p().danger, format!("⛔ {w}")),
+                    };
+                    child.allocate_ui_with_layout(egui::vec2(col, row_h), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.set_width(col);
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        ui.add(egui::Label::new(RichText::new(format!("{icon}{}", it.name())).small().color(old_col)).truncate()).on_hover_text(it.path.to_string_lossy());
+                        let new_text = if it.status == Status::Unchanged { it.name() } else { it.new.clone() };
+                        ui.add(egui::Label::new(RichText::new(format!("» {new_text}")).color(new_col)).truncate());
+                    });
+                    child.add(egui::Label::new(RichText::new(st).small().color(new_col)).truncate());
+                    if resp.clicked() {
+                        clicked = Some(i);
+                    }
                 }
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::left_to_right(egui::Align::Center)));
-                let mut on = it.on;
-                if child.checkbox(&mut on, "").changed() {
-                    toggles.push(i);
-                }
-                let icon = if it.is_dir { "📁 " } else { "" };
-                let old_col = if it.on { theme::p().text } else { theme::p().muted };
-                child.allocate_ui_with_layout(egui::vec2(col, row_h), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.set_width(col);
-                    ui.add(egui::Label::new(RichText::new(format!("{icon}{}", it.name())).color(old_col)).truncate()).on_hover_text(it.path.to_string_lossy());
-                });
-                let (new_col, st) = match &it.status {
-                    Status::Unchanged => (theme::p().muted, if it.on { tr("sin cambios").to_string() } else { tr("excluido").to_string() }),
-                    Status::Ok => (theme::p().ok, "✔".to_string()),
-                    Status::Conflict(w) => (theme::p().danger, format!("⚠ {w}")),
-                    Status::Invalid(w) => (theme::p().danger, format!("⛔ {w}")),
-                };
-                child.allocate_ui_with_layout(egui::vec2(col, row_h), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.set_width(col);
-                    ui.add(egui::Label::new(RichText::new(&it.new).color(new_col)).truncate());
-                });
-                child.add(egui::Label::new(RichText::new(st).small().color(new_col)).truncate());
-                if resp.clicked() {
-                    clicked = Some(i);
-                }
-            }
+            });
         });
         for i in toggles {
             self.items[i].on = !self.items[i].on;

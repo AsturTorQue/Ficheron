@@ -1744,6 +1744,7 @@ static TABLE: &[[&str; 4]] = &[
     ["También con Ctrl + y Ctrl − (Ctrl 0 vuelve al 100 %)", "Also with Ctrl + and Ctrl − (Ctrl 0 goes back to 100 %)", "Também com Ctrl + e Ctrl − (Ctrl 0 volta aos 100 %)", "Aussi avec Ctrl + et Ctrl − (Ctrl 0 revient à 100 %)"],
     ["Sobre", "On", "Sobre", "Sur"],
     ["Usar los seleccionados ({})", "Use the selected ({})", "Usar os selecionados ({})", "Utiliser la sélection ({})"],
+    ["Nombre actual » nombre nuevo", "Current name » new name", "Nome atual » nome novo", "Nom actuel » nouveau nom"],
     ["Duplicar pestaña", "Duplicate tab", "Duplicar separador", "Dupliquer l'onglet"],
     ["… (solo se muestra el principio)", "… (only the beginning is shown)", "… (só se mostra o início)", "… (seul le début est affiché)"],
     ["… y {} más", "… and {} more", "… e mais {}", "… et {} de plus"],
