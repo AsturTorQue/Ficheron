@@ -32,6 +32,7 @@ mod roots;
 mod settings;
 mod sync;
 mod theme;
+mod tree;
 mod tools;
 mod ui_kit;
 

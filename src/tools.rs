@@ -76,7 +76,7 @@ impl Kind {
             Kind::Shred => tr("Borrado seguro"),
             Kind::ChangeDate => tr("Cambiar fecha"),
             Kind::Attributes => tr("Atributos"),
-            Kind::CopyList => tr("Copiar nombres y rutas"),
+            Kind::CopyList => tr("Árbol de carpetas y listados"),
             Kind::PackToFolder => tr("Agrupar en carpeta"),
             Kind::Symlink => tr("Crear enlace"),
         }
@@ -106,7 +106,7 @@ impl Kind {
             Kind::Shred => "🔥",
             Kind::ChangeDate => "🕓",
             Kind::Attributes => "🔒",
-            Kind::CopyList => "📋",
+            Kind::CopyList => "🌲",
             Kind::PackToFolder => "📦",
             Kind::Symlink => "⤴",
         }
@@ -136,7 +136,7 @@ impl Kind {
             Kind::Shred => tr("Sobrescribe el contenido antes de borrar para que no se pueda recuperar."),
             Kind::ChangeDate => tr("Cambia la fecha de modificación de los elementos."),
             Kind::Attributes => tr("Marca como solo lectura o ejecutable."),
-            Kind::CopyList => tr("Copia al portapapeles los nombres, rutas o el contenido de una carpeta."),
+            Kind::CopyList => tr("Muestra las carpetas como un árbol (o una lista de nombres o rutas) con sus totales: archivos, carpetas, tamaño y tipos. Cópialo o guárdalo."),
             Kind::PackToFolder => tr("Mueve los elementos seleccionados a una carpeta nueva."),
             Kind::Symlink => tr("Crea un acceso directo (enlace simbólico) al elemento."),
         }
@@ -197,6 +197,7 @@ pub struct ToolWindow {
     comparer: Option<crate::compare::Comparer>,
     integrity: Option<crate::integrity::Integrity>,
     emptydirs: Option<crate::emptydirs::EmptyDirs>,
+    treetool: Option<crate::tree::TreeTool>,
     // dividir
     part_mb: f64,
     // patrón
@@ -212,8 +213,6 @@ pub struct ToolWindow {
     readonly: bool,
     executable: bool,
     // listas
-    list_mode: u8,
-    list_text: String,
     // agrupar / enlace
     name: String,
     // resultados
@@ -282,6 +281,7 @@ impl ToolWindow {
             comparer: None,
             integrity: None,
             emptydirs: None,
+            treetool: None,
             part_mb: 100.0,
             recursive: true,
             dest: String::new(),
@@ -290,8 +290,6 @@ impl ToolWindow {
             date_text: now.format("%d/%m/%Y %H:%M").to_string(),
             readonly: false,
             executable: false,
-            list_mode: 0,
-            list_text: String::new(),
             name: match kind {
                 Kind::PackToFolder => tr("Carpeta nueva").into(),
                 Kind::Symlink => trf!("{} - enlace", first_name),
@@ -367,19 +365,9 @@ impl ToolWindow {
             t.renamer = Some(crate::rename::Renamer::new(std::mem::take(&mut t.targets), t.base.clone()));
         }
         if kind == Kind::CopyList {
-            t.rebuild_list();
+            t.treetool = Some(crate::tree::TreeTool::new(t.targets.clone(), t.base.clone()));
         }
         t
-    }
-
-    /// Folders to work on: the selected folders, or the current folder.
-    fn roots(&self) -> Vec<PathBuf> {
-        let dirs: Vec<PathBuf> = self.targets.iter().filter(|p| p.is_dir()).cloned().collect();
-        if dirs.is_empty() {
-            vec![self.base.clone()]
-        } else {
-            dirs
-        }
     }
 
     pub fn show(&mut self, ctx: &egui::Context, events: &mut Vec<ToolEvent>, selection: &[PathBuf], cwd: &Path) {
@@ -432,7 +420,7 @@ impl ToolWindow {
     }
 
     fn is_big(&self) -> bool {
-        matches!(self.kind, Kind::BatchRename | Kind::Duplicates | Kind::Sync | Kind::DeleteByMask | Kind::Compress | Kind::Extract | Kind::Organize | Kind::Grep | Kind::Images | Kind::Crypt | Kind::MakeFolders | Kind::TextConv | Kind::Replace | Kind::Checksum | Kind::RemoveEmpty | Kind::Meta | Kind::Compare | Kind::Integrity)
+        matches!(self.kind, Kind::BatchRename | Kind::Duplicates | Kind::Sync | Kind::DeleteByMask | Kind::Compress | Kind::Extract | Kind::Organize | Kind::Grep | Kind::Images | Kind::Crypt | Kind::MakeFolders | Kind::TextConv | Kind::Replace | Kind::Checksum | Kind::RemoveEmpty | Kind::Meta | Kind::Compare | Kind::Integrity | Kind::CopyList)
     }
 
     /// The tool drawn straight into `ui`, filling it (when it is the whole program's window).
@@ -545,7 +533,11 @@ impl ToolWindow {
                     Kind::Shred => self.ui_shred(ui),
                     Kind::ChangeDate => self.ui_date(ui, events),
                     Kind::Attributes => self.ui_attrs(ui, events),
-                    Kind::CopyList => self.ui_copylist(ui, events),
+                    Kind::CopyList => {
+                        if let Some(x) = &mut self.treetool {
+                            x.ui(ui, events, selection, cwd);
+                        }
+                    }
                     Kind::PackToFolder => self.ui_pack(ui, events),
                     Kind::Symlink => self.ui_symlink(ui, events),
                 }
@@ -669,7 +661,6 @@ impl ToolWindow {
             let more = if self.targets.len() > 3 { trf!(" y {} más", self.targets.len() - 3) } else { String::new() };
             trf!("{} elementos: {}{}", self.targets.len(), names.join(", "), more)
         };
-        let mut changed = false;
         ui.horizontal(|ui| {
             crate::ui_kit::label(ui, tr("Sobre"));
             if ui.button(tr("📂 Examinar…")).clicked() {
@@ -678,7 +669,6 @@ impl ToolWindow {
             }
             if !selection.is_empty() && selection != self.targets.as_slice() && ui.button(trf!("Usar los seleccionados ({})", selection.len())).clicked() {
                 self.targets = selection.to_vec();
-                changed = true;
             }
             ui.add(egui::Label::new(RichText::new(text)).truncate()).on_hover_text(self.targets.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join("\n"));
         });
@@ -690,10 +680,6 @@ impl ToolWindow {
             }
             self.targets = picked;
             self.target_picker = None;
-            changed = true;
-        }
-        if changed && self.kind == Kind::CopyList {
-            self.rebuild_list();
         }
     }
 
@@ -956,68 +942,6 @@ impl ToolWindow {
     }
 
     // ---------------- Listas, agrupar y enlaces ----------------
-
-    fn rebuild_list(&mut self) {
-        let items: Vec<PathBuf> = if self.targets.is_empty() || self.list_mode == 3 {
-            let root = self.roots().into_iter().next().unwrap_or_else(|| self.base.clone());
-            let mut v: Vec<PathBuf> = fs::read_dir(&root).map(|rd| rd.flatten().map(|e| e.path()).collect()).unwrap_or_default();
-            v.sort();
-            v
-        } else {
-            self.targets.clone()
-        };
-        let lines: Vec<String> = items
-            .iter()
-            .map(|p| {
-                let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
-                match self.list_mode {
-                    1 => p.to_string_lossy().to_string(),
-                    4 => crate::netpath::network_path(p).unwrap_or_else(|| p.to_string_lossy().to_string()),
-                    2 | 3 => {
-                        let m = fs::metadata(p).ok();
-                        let size = m.as_ref().map(|m| if m.is_dir() { "<carpeta>".to_string() } else { human_size(m.len()) }).unwrap_or_default();
-                        let date = fsops::format_time(m.and_then(|m| m.modified().ok()));
-                        format!("{name}\t{size}\t{date}")
-                    }
-                    _ => name,
-                }
-            })
-            .collect();
-        self.list_text = lines.join("\n");
-    }
-
-    fn ui_copylist(&mut self, ui: &mut egui::Ui, events: &mut Vec<ToolEvent>) {
-        let before = self.list_mode;
-        ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(&mut self.list_mode, 0, tr("Solo nombres"));
-            ui.selectable_value(&mut self.list_mode, 1, tr("Rutas completas"));
-            ui.selectable_value(&mut self.list_mode, 2, tr("Nombre, tamaño y fecha"));
-            ui.selectable_value(&mut self.list_mode, 3, tr("Contenido de la carpeta"));
-            ui.selectable_value(&mut self.list_mode, 4, tr("Rutas de red (UNC)")).on_hover_text(tr("En carpetas compartidas SMB/NFS: \\\\servidor\\recurso\\carpeta. Las rutas locales se dejan igual."));
-        });
-        if before != self.list_mode {
-            self.rebuild_list();
-        }
-        egui::ScrollArea::vertical().max_height(crate::tools::grow(ui, 260.0)).id_salt("lista").show(ui, |ui| {
-            ui.add(egui::TextEdit::multiline(&mut self.list_text).font(egui::TextStyle::Monospace).desired_width(f32::INFINITY).desired_rows(10));
-        });
-        ui.horizontal(|ui| {
-            if self.run_button(ui, tr("📋 Copiar al portapapeles"), false) {
-                events.push(ToolEvent::Clipboard(self.list_text.clone()));
-                self.set_status(trf!("{} línea(s) copiadas", self.list_text.lines().count()), false);
-            }
-            if ui.button(tr("💾 Guardar como lista.txt")).clicked() {
-                let out = fsops::unique_name(&self.base, "lista.txt");
-                match fs::write(&out, &self.list_text) {
-                    Ok(()) => {
-                        self.set_status(trf!("Guardado en {}", out.display()), false);
-                        events.push(ToolEvent::Reload);
-                    }
-                    Err(e) => self.set_status(trf!("No se pudo guardar: {}", e), true),
-                }
-            }
-        });
-    }
 
     fn ui_pack(&mut self, ui: &mut egui::Ui, events: &mut Vec<ToolEvent>) {
         if self.targets.is_empty() {

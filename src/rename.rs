@@ -2366,7 +2366,7 @@ fn two_phase(pairs: &[(PathBuf, PathBuf)]) -> (Vec<(PathBuf, PathBuf)>, Vec<Stri
     (done, errs)
 }
 
-fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+pub(crate) fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     let (a, b) = (a.to_lowercase(), b.to_lowercase());
     let (mut x, mut y) = (a.chars().peekable(), b.chars().peekable());
     loop {
