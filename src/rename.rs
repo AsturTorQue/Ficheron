@@ -977,6 +977,11 @@ impl Renamer {
                     it.on = false;
                 }
             }
+            if ui.add_enabled(!self.items.is_empty(), egui::Button::new(tr("Invertir"))).on_hover_text(tr("Los marcados pasan a desmarcados y al revés (no usa el filtro)")).clicked() {
+                for it in &mut self.items {
+                    it.on = !it.on;
+                }
+            }
             if let Err(e) = &m {
                 ui.label(RichText::new(trf!("Expresión no válida: {}", e)).small().color(theme::p().danger));
             } else if ok {
