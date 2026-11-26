@@ -134,7 +134,7 @@ impl Kind {
             Kind::Compress => tr("Comprime en ZIP, 7z, TAR.GZ, TAR.XZ, TAR.ZST y más: todo en un paquete o uno por cada archivo, con contraseña y niveles."),
             Kind::Sync => tr("Mantiene dos carpetas al día: espejo, actualizar, solo añadir, bidireccional o mover, con vista previa de todo lo que se hará."),
             Kind::Shred => tr("Sobrescribe el contenido antes de borrar para que no se pueda recuperar."),
-            Kind::ChangeDate => tr("Cambia la fecha de modificación de los elementos."),
+            Kind::ChangeDate => tr("Cambia las fechas de modificación, último acceso y (en Windows y macOS) creación de los elementos."),
             Kind::Attributes => tr("Marca como solo lectura o ejecutable."),
             Kind::CopyList => tr("Muestra las carpetas como un árbol (o una lista de nombres o rutas) con sus totales: archivos, carpetas, tamaño y tipos. Cópialo o guárdalo."),
             Kind::PackToFolder => tr("Mete archivos en carpetas nuevas: todos en una, una carpeta por archivo, agrupados por el principio del nombre o en lotes de N. Ves el resultado antes y puedes deshacerlo."),
@@ -215,6 +215,8 @@ pub struct ToolWindow {
     // listas
     // agrupar / enlace
     name: String,
+    /// Which dates «Cambiar fecha» sets: modified, last opened, created.
+    date_which: [bool; 3],
     pack_mode: crate::packdir::Mode,
     pack_sep: String,
     pack_batch: usize,
@@ -296,6 +298,7 @@ impl ToolWindow {
             date_text: now.format("%d/%m/%Y %H:%M").to_string(),
             readonly: false,
             executable: false,
+            date_which: [true, false, false],
             pack_mode: crate::packdir::Mode::One,
             pack_sep: "-".into(),
             pack_batch: 50,
@@ -872,14 +875,39 @@ impl ToolWindow {
             ui.label(tr("Selecciona los elementos a los que cambiar la fecha."));
             return;
         }
+        // What the first item has now, so it's clear which date is which.
+        if let Ok(m) = fs::metadata(&self.targets[0]) {
+            ui.label(RichText::new(trf!("Fechas actuales de «{}»", self.targets[0].file_name().unwrap_or_default().to_string_lossy())).small().strong().color(theme::p().sub));
+            egui::Grid::new("fechas_actuales").num_columns(2).spacing([16.0, 2.0]).show(ui, |ui| {
+                for (k, t) in [(tr("Modificación"), m.modified().ok()), (tr("Último acceso"), m.accessed().ok()), (tr("Creación"), m.created().ok())] {
+                    ui.label(RichText::new(k).small().color(theme::p().sub));
+                    ui.label(RichText::new(t.map(|t| fsops::format_time(Some(t))).unwrap_or_else(|| tr("el sistema no la guarda").to_string())).small());
+                    ui.end_row();
+                }
+            });
+            ui.add_space(4.0);
+        }
         ui.horizontal(|ui| {
-            crate::ui_kit::label(ui, tr("Nueva fecha de modificación:").trim_end_matches([':', ' ']));
+            crate::ui_kit::label(ui, tr("Nueva fecha"));
             ui.add(egui::TextEdit::singleline(&mut self.date_text).desired_width(140.0)).on_hover_text(tr("dd/mm/aaaa hh:mm"));
             if ui.small_button(tr("Ahora")).clicked() {
                 let now: chrono::DateTime<chrono::Local> = SystemTime::now().into();
                 self.date_text = now.format("%d/%m/%Y %H:%M").to_string();
             }
         });
+        ui.horizontal_wrapped(|ui| {
+            crate::ui_kit::label(ui, tr("Cambiar"));
+            ui.checkbox(&mut self.date_which[0], tr("Modificación")).on_hover_text(tr("La fecha que muestran casi todos los programas: cuándo cambió el contenido. Se puede cambiar en Windows, macOS y Linux."));
+            ui.checkbox(&mut self.date_which[1], tr("Último acceso")).on_hover_text(tr("Cuándo se abrió por última vez. Se puede cambiar en todos los sistemas, pero muchos no la actualizan al abrir (para ir más rápido)."));
+            let can_create = cfg!(any(windows, target_os = "macos"));
+            ui.add_enabled(can_create, egui::Checkbox::new(&mut self.date_which[2], tr("Creación")))
+                .on_hover_text(tr("Cuándo se creó el archivo. Se puede cambiar en Windows y macOS."))
+                .on_disabled_hover_text(tr("En Linux la fecha de creación la pone el sistema y ningún programa puede cambiarla."));
+            if !can_create {
+                self.date_which[2] = false;
+            }
+        });
+        ui.label(RichText::new(tr("Hay otra fecha, la de «cambio de atributos» (ctime en Linux y macOS), que el propio sistema pone a «ahora» cada vez que se toca el archivo, también al usar esta herramienta; no se puede elegir.")).small().color(theme::p().muted));
         ui.checkbox(&mut self.recursive, tr("Aplicar también al contenido de las carpetas"));
         let parsed = chrono::NaiveDateTime::parse_from_str(self.date_text.trim(), "%d/%m/%Y %H:%M")
             .ok()
@@ -889,6 +917,10 @@ impl ToolWindow {
             ui.colored_label(theme::p().danger, tr("Escribe la fecha como dd/mm/aaaa hh:mm"));
             return;
         };
+        if !self.date_which.iter().any(|b| *b) {
+            ui.colored_label(theme::p().danger, tr("Marca al menos una fecha para cambiar."));
+            return;
+        }
         if self.run_button(ui, tr("Aplicar"), false) {
             let mut items = self.targets.clone();
             if self.recursive {
@@ -899,11 +931,11 @@ impl ToolWindow {
             }
             let mut errs = vec![];
             for p in &items {
-                if let Err(e) = set_mtime(p, t) {
+                if let Err(e) = set_times(p, t, self.date_which) {
                     errs.push(format!("{}: {e}", p.display()));
                 }
             }
-            self.set_status(trf!("Fecha cambiada en {} elemento(s)", items.len() - errs.len()), false);
+            self.set_status(trf!("Fecha cambiada en {} elemento(s)", items.len() - errs.len()), !errs.is_empty());
             self.errors = errs;
             events.push(ToolEvent::Reload);
         }
@@ -1214,9 +1246,34 @@ pub(crate) fn shred_file(p: &Path, passes: u32) -> io::Result<()> {
     fs::remove_file(p)
 }
 
-fn set_mtime(p: &Path, t: SystemTime) -> io::Result<()> {
-    let f = if p.is_dir() { fs::File::open(p)? } else { fs::OpenOptions::new().write(true).open(p).or_else(|_| fs::File::open(p))? };
-    f.set_modified(t)
+/// Sets the chosen dates: [modified, last opened, created]. Creation only exists to set on
+/// Windows and macOS. Dates not chosen are left as they are.
+fn set_times(p: &Path, t: SystemTime, which: [bool; 3]) -> io::Result<()> {
+    let m = fs::metadata(p)?;
+    let mut times = fs::FileTimes::new();
+    times = times.set_modified(if which[0] { t } else { m.modified()? });
+    times = times.set_accessed(if which[1] { t } else { m.accessed().unwrap_or(m.modified()?) });
+    if which[2] {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::FileTimesExt;
+            times = times.set_created(t);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            use std::os::macos::fs::FileTimesExt;
+            times = times.set_created(t);
+        }
+    }
+    #[cfg(windows)]
+    let f = {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_WRITE_ATTRIBUTES, and FILE_FLAG_BACKUP_SEMANTICS so folders open too.
+        fs::OpenOptions::new().access_mode(0x100).custom_flags(0x0200_0000).open(p)?
+    };
+    #[cfg(not(windows))]
+    let f = if m.is_dir() { fs::File::open(p)? } else { fs::OpenOptions::new().write(true).open(p).or_else(|_| fs::File::open(p))? };
+    f.set_times(times)
 }
 
 fn make_symlink(target: &Path, link: &Path) -> io::Result<()> {
