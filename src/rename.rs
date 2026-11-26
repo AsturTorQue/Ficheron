@@ -1172,19 +1172,20 @@ impl Renamer {
             }
         });
         let w = ui.available_width();
-        // Each row shows the current name (small) above the new one, both full width, so long names
-        // fit; if one is longer still, the list scrolls sideways instead of cutting it.
+        // Three columns, one line per file. Each name column is as wide as the longest name (within
+        // reason); when that is wider than the panel the list scrolls sideways, headers included.
         let longest = self.items.iter().map(|i| i.name().chars().count().max(i.new.chars().count())).max().unwrap_or(0);
         let status_w = 170.0;
-        let col = (w - 30.0 - status_w).max(200.0).max((longest as f32 * 8.0 + 30.0).min(2400.0));
+        let col = ((w - 30.0 - status_w) / 2.0).max(140.0).max((longest as f32 * 7.6 + 24.0).min(1100.0));
         let list_h = (ui.available_height() - 24.0).max(120.0);
-        let row_h = 38.0;
+        let row_h = 24.0;
         let mut toggles = vec![];
         let mut clicked = None;
         egui::ScrollArea::horizontal().id_salt("vista_ren_h").auto_shrink([false, false]).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.add_space(28.0);
-                crate::checksum::cell(ui, col, 18.0, |ui| ui.label(RichText::new(tr("Nombre actual » nombre nuevo")).small().color(theme::p().sub)));
+                crate::checksum::cell(ui, col, 18.0, |ui| ui.label(RichText::new(tr("Nombre actual")).small().color(theme::p().sub)));
+                crate::checksum::cell(ui, col, 18.0, |ui| ui.label(RichText::new(tr("Nombre nuevo")).small().color(theme::p().sub)));
                 ui.label(RichText::new(tr("Estado")).small().color(theme::p().sub));
             });
             egui::ScrollArea::vertical().id_salt("vista_ren").max_height(list_h).auto_shrink([false, false]).show_rows(ui, row_h, self.items.len(), |ui, range| {
@@ -1192,7 +1193,7 @@ impl Renamer {
                 for i in range {
                     let it = &self.items[i];
                     let selected = self.selected == Some(i);
-                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(28.0 + col + status_w, row_h), egui::Sense::click());
+                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(28.0 + col * 2.0 + status_w, row_h), egui::Sense::click());
                     if selected {
                         ui.painter().rect_filled(rect, 4.0, theme::accent().gamma_multiply(0.25));
                     } else if i % 2 == 1 {
@@ -1204,20 +1205,15 @@ impl Renamer {
                         toggles.push(i);
                     }
                     let icon = if it.is_dir { "📁 " } else { "" };
-                    let old_col = if it.on { theme::p().sub } else { theme::p().muted };
+                    let old_col = if it.on { theme::p().text } else { theme::p().muted };
                     let (new_col, st) = match &it.status {
                         Status::Unchanged => (theme::p().muted, if it.on { tr("sin cambios").to_string() } else { tr("excluido").to_string() }),
                         Status::Ok => (theme::p().ok, "✔".to_string()),
                         Status::Conflict(w) => (theme::p().danger, format!("⚠ {w}")),
                         Status::Invalid(w) => (theme::p().danger, format!("⛔ {w}")),
                     };
-                    child.allocate_ui_with_layout(egui::vec2(col, row_h), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        ui.set_width(col);
-                        ui.spacing_mut().item_spacing.y = 0.0;
-                        ui.add(egui::Label::new(RichText::new(format!("{icon}{}", it.name())).small().color(old_col)).truncate()).on_hover_text(it.path.to_string_lossy());
-                        let new_text = if it.status == Status::Unchanged { it.name() } else { it.new.clone() };
-                        ui.add(egui::Label::new(RichText::new(format!("» {new_text}")).color(new_col)).truncate());
-                    });
+                    crate::checksum::cell(&mut child, col, row_h, |ui| ui.add(egui::Label::new(RichText::new(format!("{icon}{}", it.name())).color(old_col)).truncate()).on_hover_text(it.path.to_string_lossy()));
+                    crate::checksum::cell(&mut child, col, row_h, |ui| ui.add(egui::Label::new(RichText::new(&it.new).color(new_col)).truncate()));
                     child.add(egui::Label::new(RichText::new(st).small().color(new_col)).truncate());
                     if resp.clicked() {
                         clicked = Some(i);
