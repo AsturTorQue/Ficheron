@@ -32,6 +32,7 @@ mod roots;
 mod settings;
 mod sync;
 mod packdir;
+mod help;
 mod theme;
 mod tree;
 mod tools;
@@ -308,6 +309,8 @@ struct App {
     quick: Option<quicklook::QuickLook>,
     /// The «Menú contextual del sistema» window: open, and what the last action said.
     integration: Option<Option<(String, bool)>>,
+    /// The help window, open on this page.
+    help: Option<u8>,
     /// Started for one tool from the system's right-click menu: the window shows only that tool.
     solo: bool,
     /// The file explorer is shown; otherwise the start screen with the utilities.
@@ -496,6 +499,7 @@ impl App {
             preview: None,
             quick: None,
             integration: None,
+            help: None,
             tool_picker: None,
             solo: false,
             explorer: settings::start_with_explorer() || start_given,
@@ -1123,6 +1127,7 @@ impl App {
             });
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                help::menu(ui, &mut self.help);
                 ui.menu_button(tr("🎨 Apariencia"), |ui| appearance_menu(ui));
                 if ui.selectable_label(self.show_panel, tr("Panel")).on_hover_text(tr("Panel lateral derecho")).clicked() {
                     self.show_panel = !self.show_panel;
@@ -1286,6 +1291,7 @@ impl App {
                 ui.label(RichText::new(APP_NAME).size(22.0).strong().color(theme::accent()));
                 ui.label(RichText::new(tr("Utilidades para archivos y carpetas")).color(theme::p().sub));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    help::menu(ui, &mut self.help);
                     ui.menu_button(tr("🎨 Apariencia"), |ui| appearance_menu(ui));
                     if ui.button(tr("🖱 Menú contextual del sistema…")).on_hover_text(tr("Añade las herramientas al clic derecho del explorador de archivos del sistema")).clicked() {
                         self.integration = Some(None);
@@ -1348,6 +1354,7 @@ impl App {
                     ui.label(RichText::new(format!("{}  {}", t.kind.icon(), t.kind.label())).strong().size(16.0));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    help::menu(ui, &mut self.help);
                     if ui.button(tr("📂 Abrir el explorador de Ficherón")).on_hover_text(self.cwd.to_string_lossy()).clicked() {
                         to_explorer = true;
                     }
@@ -2313,6 +2320,8 @@ impl eframe::App for App {
         self.handle_screenshot(ctx);
         // Ctrl + / Ctrl − / Ctrl 0 change the size too: remember it for next time.
         settings::set_zoom(ctx.zoom_factor());
+        help::shortcut(ctx, &mut self.help);
+        help::window(ctx, &mut self.help);
         if self.solo {
             self.solo_update(ctx);
             return;

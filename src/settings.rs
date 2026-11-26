@@ -43,7 +43,7 @@ pub fn set_separate_windows(on: bool) {
     save();
 }
 
-fn file() -> Option<PathBuf> {
+pub fn file() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("utilidades-de-archivos").join("ajustes.txt"))
 }
 
