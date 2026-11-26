@@ -308,6 +308,11 @@ struct App {
     integration: Option<Option<(String, bool)>>,
     /// Started for one tool from the system's right-click menu: the window shows only that tool.
     solo: bool,
+    /// The file explorer is shown; otherwise the start screen with the utilities.
+    explorer: bool,
+    /// A tool waiting for the files it works on (chosen in a picker from the start screen).
+    hub_pick: Option<(Kind, crate::roots::Picker)>,
+    logo: Option<egui::TextureHandle>,
     /// Where the «Utilidades…» panel of the right-click menu is open.
     tool_picker: Option<egui::Pos2>,
     tools: Vec<ToolWindow>,
@@ -361,6 +366,10 @@ fn appearance_menu(ui: &mut egui::Ui) {
         });
     }
     ui.separator();
+    let mut ex = settings::start_with_explorer();
+    if ui.checkbox(&mut ex, tr("Empezar en el explorador de archivos")).on_hover_text(tr("Si no, al abrir se ve la pantalla con todas las utilidades.")).changed() {
+        settings::set_start_with_explorer(ex);
+    }
     let mut sep = settings::separate_windows();
     if ui.checkbox(&mut sep, tr("Herramientas en ventanas aparte")).on_hover_text(tr("Cada herramienta en su propia ventana, que se puede agrandar más que la principal y llevar a otra pantalla. Desmarcado: se abren dentro de la ventana principal, siempre por delante.")).changed() {
         settings::set_separate_windows(sep);
@@ -417,6 +426,8 @@ impl App {
             .map(|s| s.lines().filter(|l| !l.is_empty()).map(PathBuf::from).collect())
             .unwrap_or_default();
 
+        // A folder given on the command line opens the explorer there.
+        let start_given = start.is_some() && LAUNCH.get().is_none();
         let cwd = start.filter(|p| p.is_dir()).or_else(dirs::home_dir).unwrap_or_else(|| PathBuf::from("/"));
         let cwd = fsops::canonical(&cwd);
         let recent: Vec<PathBuf> = recent_file()
@@ -455,6 +466,9 @@ impl App {
             integration: None,
             tool_picker: None,
             solo: false,
+            explorer: settings::start_with_explorer() || start_given,
+            hub_pick: None,
+            logo: None,
             tools: vec![],
             next_tool: 1,
             screenshot,
@@ -935,6 +949,10 @@ impl App {
 
     fn toolbar(&mut self, ui: &mut egui::Ui, acts: &mut Vec<Action>) {
         ui.horizontal(|ui| {
+            if ui.button(RichText::new(tr("◀ Inicio")).strong().color(theme::accent())).on_hover_text(tr("Volver a la pantalla de utilidades")).clicked() {
+                self.explorer = false;
+            }
+            ui.separator();
             let nav = |ui: &mut egui::Ui, enabled: bool, icon: &str, tip: &str| ui.add_enabled(enabled, egui::Button::new(RichText::new(icon).size(16.0))).on_hover_text(tip).clicked();
             if nav(ui, !self.back.is_empty(), "⬅", tr("Atrás (Alt+←)")) {
                 acts.push(Action::Back);
@@ -1122,6 +1140,182 @@ impl App {
         if ui.button(tr("🖱  Menú contextual del sistema…")).on_hover_text(tr("Añade las herramientas al clic derecho del explorador de archivos del sistema")).clicked() {
             acts.push(Action::Integration);
             ui.close_menu();
+        }
+    }
+
+    /// The file explorer: toolbar, tabs, places, the file list and the side panel.
+    fn explorer_panels(&mut self, ctx: &egui::Context, acts: &mut Vec<Action>) {
+        let bar = theme::p().bar;
+
+        egui::TopBottomPanel::top("barra").frame(egui::Frame::new().fill(bar).inner_margin(egui::Margin::symmetric(10, 8))).show(ctx, |ui| {
+            self.toolbar(ui, acts);
+            ui.add_space(2.0);
+            self.actions_bar(ui, acts);
+        });
+
+        egui::TopBottomPanel::top("pestanas").frame(egui::Frame::new().fill(bar).inner_margin(egui::Margin { left: 10, right: 10, top: 0, bottom: 4 })).show(ctx, |ui| {
+            self.tab_bar(ui, acts);
+        });
+
+        egui::TopBottomPanel::bottom("estado").frame(egui::Frame::new().fill(bar).inner_margin(egui::Margin::symmetric(12, 5))).show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                let n = self.visible.len();
+                ui.label(if self.search_results.is_some() { trf!("{} resultado(s) de búsqueda", n) } else { trf!("{} elemento(s)", n) });
+                if !self.selection.is_empty() {
+                    let bytes: u64 = self.selected_entries().iter().map(|e| e.size).sum();
+                    ui.separator();
+                    ui.label(trf!("{} seleccionado(s) · {}", self.selection.len(), human_size(bytes)));
+                }
+                if let Some((p, cut)) = &self.clipboard {
+                    ui.separator();
+                    ui.label(RichText::new(trf!("{} en el portapapeles ({})", p.len(), if *cut { tr("cortar") } else { tr("copiar") })).color(theme::p().muted));
+                }
+                if let Some((m, err, t)) = &self.message {
+                    if t.elapsed().as_secs() < 6 {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let col = if *err { theme::p().danger } else { theme::p().ok };
+                            ui.label(RichText::new(m).color(col));
+                        });
+                        ctx.request_repaint_after(std::time::Duration::from_secs(1));
+                    }
+                }
+            });
+        });
+
+        egui::SidePanel::left("lugares")
+            .resizable(true)
+            .default_width(210.0)
+            .width_range(150.0..=360.0)
+            .frame(egui::Frame::new().fill(theme::p().side).inner_margin(egui::Margin::symmetric(8, 6)))
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| self.sidebar(ui, acts));
+            });
+
+        if self.show_panel {
+            egui::SidePanel::right("panel_derecho")
+                .resizable(true)
+                .default_width(280.0)
+                .width_range(210.0..=480.0)
+                .frame(egui::Frame::new().fill(theme::p().side2).inner_margin(10))
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut self.panel_tab, 0, tr("🔧 Utilidades"));
+                        ui.selectable_value(&mut self.panel_tab, 1, tr("ℹ Detalles"));
+                    });
+                    ui.separator();
+                    if self.panel_tab == 0 {
+                        self.utilities_panel(ui, acts);
+                    } else {
+                        self.details_panel(ui);
+                    }
+                });
+        }
+
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::p().base).inner_margin(egui::Margin::symmetric(6, 4))).show(ctx, |ui| {
+            if let Some(err) = &self.load_error {
+                ui.add_space(40.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(RichText::new("⚠").size(40.0).color(Color32::from_rgb(200, 120, 30)));
+                    ui.label(err);
+                });
+                return;
+            }
+            if self.visible.is_empty() {
+                ui.add_space(60.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(RichText::new("📂").size(48.0).color(theme::p().muted));
+                    let msg = if !self.filter.is_empty() { tr("No hay nada que coincida con la búsqueda") } else { tr("Esta carpeta está vacía") };
+                    ui.label(RichText::new(msg).color(theme::p().muted));
+                });
+                self.empty_space(ui, acts);
+                return;
+            }
+            match self.view_mode {
+                ViewMode::List => self.list_view(ui, acts),
+                ViewMode::Icons => self.icons_view(ui, acts),
+            }
+        });
+
+    }
+
+    /// Opens a tool from the start screen. Tools that work on chosen files ask for them first.
+    fn hub_open(&mut self, k: Kind) {
+        if k.folder_ok() {
+            self.tools.push(ToolWindow::new(self.next_tool, k, vec![], self.cwd.clone()));
+            self.next_tool += 1;
+        } else {
+            self.hub_pick = Some((k, crate::roots::Picker::new(self.cwd.clone())));
+        }
+    }
+
+    /// The start screen: every utility, grouped, each with what it does.
+    fn hub(&mut self, ctx: &egui::Context) {
+        let mut open: Option<Kind> = None;
+        egui::TopBottomPanel::top("hub_bar").frame(egui::Frame::new().fill(theme::p().bar).inner_margin(egui::Margin::symmetric(16, 10))).show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                let logo = self.logo.get_or_insert_with(|| ctx.load_texture("logo", egui::ColorImage::from_rgba_unmultiplied([64, 64], &icon::rgba(64)), egui::TextureOptions::LINEAR)).clone();
+                ui.image((logo.id(), egui::vec2(30.0, 30.0)));
+                ui.label(RichText::new(APP_NAME).size(22.0).strong().color(theme::accent()));
+                ui.label(RichText::new(tr("Utilidades para archivos y carpetas")).color(theme::p().sub));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.menu_button(tr("🎨 Apariencia"), |ui| appearance_menu(ui));
+                    if ui.button(tr("🖱 Menú contextual del sistema…")).on_hover_text(tr("Añade las herramientas al clic derecho del explorador de archivos del sistema")).clicked() {
+                        self.integration = Some(None);
+                    }
+                    if ui.button(tr("📂 Explorador de archivos")).on_hover_text(tr("Un explorador sencillo para elegir archivos y abrir las utilidades sobre ellos")).clicked() {
+                        self.explorer = true;
+                        self.reload();
+                    }
+                });
+            });
+        });
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::p().base).inner_margin(egui::Margin::symmetric(18, 12))).show(ctx, |ui| {
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                let card_w = 300.0;
+                let cols = ((ui.available_width() + 10.0) / (card_w + 10.0)).floor().max(1.0) as usize;
+                let card_w = (ui.available_width() - 10.0 * (cols as f32 - 1.0)) / cols as f32;
+                for (group, kinds) in tools::GROUPS {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(tr(group).to_uppercase()).small().strong().color(theme::p().sub));
+                    ui.add_space(2.0);
+                    for chunk in kinds.chunks(cols) {
+                        ui.horizontal_top(|ui| {
+                            ui.spacing_mut().item_spacing.x = 10.0;
+                            for k in chunk.iter().copied() {
+                                let (rect, resp) = ui.allocate_exact_size(egui::vec2(card_w, 74.0), Sense::click());
+                                let hovered = resp.hovered();
+                                let p = ui.painter();
+                                p.rect(rect, 10.0, if hovered { theme::accent().gamma_multiply(0.10) } else { theme::p().side }, Stroke::new(1.0_f32, if hovered { theme::accent().gamma_multiply(0.6) } else { theme::p().border }), egui::StrokeKind::Inside);
+                                p.text(rect.left_top() + egui::vec2(16.0, 22.0), Align2::LEFT_CENTER, k.icon(), FontId::proportional(22.0), theme::accent());
+                                let title = fitted(ui, k.label(), 15.0, theme::p().text, rect.width() - 64.0, 1);
+                                ui.painter().galley(rect.left_top() + egui::vec2(50.0, 12.0), title, theme::p().text);
+                                let desc = fitted(ui, k.description(), 12.0, theme::p().sub, rect.width() - 64.0, 2);
+                                ui.painter().galley(rect.left_top() + egui::vec2(50.0, 34.0), desc, theme::p().sub);
+                                if resp.on_hover_text(k.description()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                    open = Some(k);
+                                }
+                            }
+                        });
+                        ui.add_space(8.0);
+                    }
+                }
+                ui.add_space(8.0);
+                ui.label(RichText::new(tr("Consejo: con «Menú contextual del sistema» las abres con clic derecho sobre los archivos, desde el explorador de tu sistema.")).small().color(theme::p().muted));
+            });
+        });
+        if let Some(k) = open {
+            self.hub_open(k);
+        }
+        if let Some((k, pk)) = self.hub_pick.take() {
+            let mut slot = Some(pk);
+            let picked = crate::roots::picker_window(ctx, "hub_pick", &mut slot);
+            if !picked.is_empty() {
+                let base = picked[0].parent().map(Path::to_path_buf).unwrap_or_else(|| self.cwd.clone());
+                self.tools.push(ToolWindow::new(self.next_tool, k, picked, base));
+                self.next_tool += 1;
+                slot = None;
+            }
+            self.hub_pick = slot.map(|pk| (k, pk));
         }
     }
 
@@ -2105,97 +2299,12 @@ impl eframe::App for App {
             return;
         }
         let mut acts: Vec<Action> = vec![];
-        self.shortcuts(ctx, &mut acts);
-        let bar = theme::p().bar;
-
-        egui::TopBottomPanel::top("barra").frame(egui::Frame::new().fill(bar).inner_margin(egui::Margin::symmetric(10, 8))).show(ctx, |ui| {
-            self.toolbar(ui, &mut acts);
-            ui.add_space(2.0);
-            self.actions_bar(ui, &mut acts);
-        });
-
-        egui::TopBottomPanel::top("pestanas").frame(egui::Frame::new().fill(bar).inner_margin(egui::Margin { left: 10, right: 10, top: 0, bottom: 4 })).show(ctx, |ui| {
-            self.tab_bar(ui, &mut acts);
-        });
-
-        egui::TopBottomPanel::bottom("estado").frame(egui::Frame::new().fill(bar).inner_margin(egui::Margin::symmetric(12, 5))).show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                let n = self.visible.len();
-                ui.label(if self.search_results.is_some() { trf!("{} resultado(s) de búsqueda", n) } else { trf!("{} elemento(s)", n) });
-                if !self.selection.is_empty() {
-                    let bytes: u64 = self.selected_entries().iter().map(|e| e.size).sum();
-                    ui.separator();
-                    ui.label(trf!("{} seleccionado(s) · {}", self.selection.len(), human_size(bytes)));
-                }
-                if let Some((p, cut)) = &self.clipboard {
-                    ui.separator();
-                    ui.label(RichText::new(trf!("{} en el portapapeles ({})", p.len(), if *cut { tr("cortar") } else { tr("copiar") })).color(theme::p().muted));
-                }
-                if let Some((m, err, t)) = &self.message {
-                    if t.elapsed().as_secs() < 6 {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let col = if *err { theme::p().danger } else { theme::p().ok };
-                            ui.label(RichText::new(m).color(col));
-                        });
-                        ctx.request_repaint_after(std::time::Duration::from_secs(1));
-                    }
-                }
-            });
-        });
-
-        egui::SidePanel::left("lugares")
-            .resizable(true)
-            .default_width(210.0)
-            .width_range(150.0..=360.0)
-            .frame(egui::Frame::new().fill(theme::p().side).inner_margin(egui::Margin::symmetric(8, 6)))
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| self.sidebar(ui, &mut acts));
-            });
-
-        if self.show_panel {
-            egui::SidePanel::right("panel_derecho")
-                .resizable(true)
-                .default_width(280.0)
-                .width_range(210.0..=480.0)
-                .frame(egui::Frame::new().fill(theme::p().side2).inner_margin(10))
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.selectable_value(&mut self.panel_tab, 0, tr("🔧 Utilidades"));
-                        ui.selectable_value(&mut self.panel_tab, 1, tr("ℹ Detalles"));
-                    });
-                    ui.separator();
-                    if self.panel_tab == 0 {
-                        self.utilities_panel(ui, &mut acts);
-                    } else {
-                        self.details_panel(ui);
-                    }
-                });
+        if self.explorer {
+            self.shortcuts(ctx, &mut acts);
+            self.explorer_panels(ctx, &mut acts);
+        } else {
+            self.hub(ctx);
         }
-
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::p().base).inner_margin(egui::Margin::symmetric(6, 4))).show(ctx, |ui| {
-            if let Some(err) = &self.load_error {
-                ui.add_space(40.0);
-                ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("⚠").size(40.0).color(Color32::from_rgb(200, 120, 30)));
-                    ui.label(err);
-                });
-                return;
-            }
-            if self.visible.is_empty() {
-                ui.add_space(60.0);
-                ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("📂").size(48.0).color(theme::p().muted));
-                    let msg = if !self.filter.is_empty() { tr("No hay nada que coincida con la búsqueda") } else { tr("Esta carpeta está vacía") };
-                    ui.label(RichText::new(msg).color(theme::p().muted));
-                });
-                self.empty_space(ui, &mut acts);
-                return;
-            }
-            match self.view_mode {
-                ViewMode::List => self.list_view(ui, &mut acts),
-                ViewMode::Icons => self.icons_view(ui, &mut acts),
-            }
-        });
 
         let mut events = vec![];
         let sel = self.selected_paths();
@@ -2210,7 +2319,10 @@ impl eframe::App for App {
                     ctx.copy_text(s);
                     self.info(tr("Copiado al portapapeles"));
                 }
-                ToolEvent::Navigate(p) => acts.push(Action::Navigate(p)),
+                ToolEvent::Navigate(p) => {
+                    self.explorer = true;
+                    acts.push(Action::Navigate(p));
+                }
             }
         }
 

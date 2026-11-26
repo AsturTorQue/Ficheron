@@ -8,6 +8,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// default on Linux, where many desktops open a new window behind the one that asked for it.
 static SEPARATE: AtomicBool = AtomicBool::new(!cfg!(target_os = "linux"));
 
+static EXPLORER: AtomicBool = AtomicBool::new(false);
+
+/// Open on the file explorer instead of the start screen with the utilities.
+pub fn start_with_explorer() -> bool {
+    EXPLORER.load(Ordering::Relaxed)
+}
+
+pub fn set_start_with_explorer(on: bool) {
+    EXPLORER.store(on, Ordering::Relaxed);
+    save();
+}
+
 pub fn separate_windows() -> bool {
     SEPARATE.load(Ordering::Relaxed)
 }
@@ -32,6 +44,7 @@ pub fn load() {
             "tema" => theme::set_theme(v.parse().unwrap_or(0)),
             "acento" => theme::set_accent(v.parse().unwrap_or(0)),
             "ventanas_aparte" => SEPARATE.store(v == "1", Ordering::Relaxed),
+            "inicio_explorador" => EXPLORER.store(v == "1", Ordering::Relaxed),
             _ => {}
         }
     }
@@ -43,6 +56,6 @@ pub fn save() {
     if let Some(d) = f.parent() {
         let _ = std::fs::create_dir_all(d);
     }
-    let s = format!("idioma={}\ntema={}\nacento={}\nventanas_aparte={}\n", i18n::LANGS[i18n::lang()].0, theme::theme_index(), theme::accent_index(), separate_windows() as u8);
+    let s = format!("idioma={}\ntema={}\nacento={}\nventanas_aparte={}\ninicio_explorador={}\n", i18n::LANGS[i18n::lang()].0, theme::theme_index(), theme::accent_index(), separate_windows() as u8, start_with_explorer() as u8);
     let _ = std::fs::write(f, s);
 }
