@@ -365,35 +365,35 @@ fn appearance_menu(ui: &mut egui::Ui) {
     }
     ui.separator();
     ui.label(RichText::new(tr("Tamaño de la interfaz")).small().color(theme::p().sub));
+    // Buttons only (no slider, no drop-down): a slider moved under the pointer as the size
+    // changed, and a drop-down inside this menu closed it before the choice counted.
+    let ctx = ui.ctx().clone();
+    let tip = tr("También con Ctrl + y Ctrl − (Ctrl 0 vuelve al 100 %)");
+    let pct = (ctx.zoom_factor() * 100.0).round() as u32;
+    let mut new: Option<f32> = None;
     ui.horizontal(|ui| {
-        let ctx = ui.ctx().clone();
-        let mut z = ctx.zoom_factor();
-        let tip = tr("También con Ctrl + y Ctrl − (Ctrl 0 vuelve al 100 %)");
         if ui.button("−").on_hover_text(tip).clicked() {
-            z -= 0.1;
+            new = Some(ctx.zoom_factor() - 0.1);
         }
-        // A list of sizes instead of a slider: a slider moves under the pointer as the
-        // interface grows or shrinks, and the size kept changing by itself.
-        let pct = (z * 100.0).round() as u32;
-        egui::ComboBox::from_id_salt("escala").width(80.0).selected_text(format!("{pct} %")).show_ui(ui, |ui| {
-            for p in [50u32, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200, 250] {
-                if ui.selectable_label(p == pct, format!("{p} %")).clicked() {
-                    z = p as f32 / 100.0;
-                }
-            }
-        });
+        ui.label(RichText::new(format!("{pct} %")).strong());
         if ui.button("+").on_hover_text(tip).clicked() {
-            z += 0.1;
-        }
-        if ui.button("100 %").clicked() {
-            z = 1.0;
-        }
-        let z = z.clamp(0.5, 2.5);
-        if (z - ctx.zoom_factor()).abs() > 0.001 {
-            ctx.set_zoom_factor(z);
-            settings::set_zoom(z);
+            new = Some(ctx.zoom_factor() + 0.1);
         }
     });
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        for p in [75u32, 90, 100, 110, 125, 150, 175, 200] {
+            if ui.selectable_label(p == pct, format!("{p} %")).clicked() {
+                new = Some(p as f32 / 100.0);
+            }
+        }
+    });
+    if let Some(z) = new {
+        let z = (z * 20.0).round() / 20.0;
+        let z = z.clamp(0.5, 2.5);
+        ctx.set_zoom_factor(z);
+        settings::set_zoom(z);
+    }
     ui.separator();
     let mut ex = settings::start_with_explorer();
     if ui.checkbox(&mut ex, tr("Empezar en el explorador de archivos")).on_hover_text(tr("Si no, al abrir se ve la pantalla con todas las utilidades.")).changed() {
