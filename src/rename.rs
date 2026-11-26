@@ -254,6 +254,8 @@ pub struct Renamer {
     add_regex: bool,
     /// Rules whose options are folded away (by position).
     folded: HashSet<usize>,
+    /// Widths of the two name columns in the preview, once the person drags a divider.
+    cols: Option<[f32; 2]>,
     /// The browsers behind «Elegir carpeta…» and «Elegir archivos…».
     folder_browser: Option<crate::dupes::Browser>,
     file_picker: Option<crate::roots::Picker>,
@@ -282,6 +284,7 @@ impl Renamer {
             add_folders: false,
             add_regex: false,
             folded: HashSet::new(),
+            cols: None,
             folder_browser: None,
             file_picker: None,
             mark_text: String::new(),
@@ -1172,28 +1175,45 @@ impl Renamer {
             }
         });
         let w = ui.available_width();
-        // Three columns, one line per file. Each name column is as wide as the longest name (within
-        // reason); when that is wider than the panel the list scrolls sideways, headers included.
+        // Three columns, one line per file. By default each name column fits the longest name but
+        // never takes more than half the panel, so the old and new names sit side by side; the
+        // dividers in the header drag to resize (double-click fits the names again).
         let longest = self.items.iter().map(|i| i.name().chars().count().max(i.new.chars().count())).max().unwrap_or(0);
         let status_w = 170.0;
-        let col = ((w - 30.0 - status_w) / 2.0).max(140.0).max((longest as f32 * 7.6 + 24.0).min(1100.0));
+        let fit = ((longest as f32) * 7.6 + 30.0).clamp(140.0, ((w - 30.0 - status_w) / 2.0).max(140.0));
+        let [c0, c1] = self.cols.unwrap_or([fit, fit]);
         let list_h = (ui.available_height() - 24.0).max(120.0);
         let row_h = 24.0;
         let mut toggles = vec![];
         let mut clicked = None;
+        let mut widths = [c0, c1];
+        let mut reset = false;
         egui::ScrollArea::horizontal().id_salt("vista_ren_h").auto_shrink([false, false]).show(ui, |ui| {
             ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
                 ui.add_space(28.0);
-                crate::checksum::cell(ui, col, 18.0, |ui| ui.label(RichText::new(tr("Nombre actual")).small().color(theme::p().sub)));
-                crate::checksum::cell(ui, col, 18.0, |ui| ui.label(RichText::new(tr("Nombre nuevo")).small().color(theme::p().sub)));
+                for (k, title) in [tr("Nombre actual"), tr("Nombre nuevo")].into_iter().enumerate() {
+                    crate::checksum::cell(ui, widths[k] - 8.0, 18.0, |ui| ui.label(RichText::new(title).small().color(theme::p().sub)));
+                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(8.0, 18.0), egui::Sense::click_and_drag());
+                    let resp = resp.on_hover_cursor(egui::CursorIcon::ResizeHorizontal).on_hover_text(tr("Arrastra para cambiar el ancho; doble clic para ajustarlo a los nombres"));
+                    let c = if resp.hovered() || resp.dragged() { theme::accent() } else { theme::p().muted.gamma_multiply(0.5) };
+                    ui.painter().vline(rect.center().x, rect.y_range(), egui::Stroke::new(1.5_f32, c));
+                    if resp.dragged() {
+                        widths[k] = (widths[k] + resp.drag_delta().x).clamp(80.0, 2000.0);
+                    }
+                    if resp.double_clicked() {
+                        reset = true;
+                    }
+                }
                 ui.label(RichText::new(tr("Estado")).small().color(theme::p().sub));
             });
+            let [c0, c1] = widths;
             egui::ScrollArea::vertical().id_salt("vista_ren").max_height(list_h).auto_shrink([false, false]).show_rows(ui, row_h, self.items.len(), |ui, range| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 for i in range {
                     let it = &self.items[i];
                     let selected = self.selected == Some(i);
-                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(28.0 + col * 2.0 + status_w, row_h), egui::Sense::click());
+                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(28.0 + c0 + c1 + status_w, row_h), egui::Sense::click());
                     if selected {
                         ui.painter().rect_filled(rect, 4.0, theme::accent().gamma_multiply(0.25));
                     } else if i % 2 == 1 {
@@ -1212,8 +1232,8 @@ impl Renamer {
                         Status::Conflict(w) => (theme::p().danger, format!("⚠ {w}")),
                         Status::Invalid(w) => (theme::p().danger, format!("⛔ {w}")),
                     };
-                    crate::checksum::cell(&mut child, col, row_h, |ui| ui.add(egui::Label::new(RichText::new(format!("{icon}{}", it.name())).color(old_col)).truncate()).on_hover_text(it.path.to_string_lossy()));
-                    crate::checksum::cell(&mut child, col, row_h, |ui| ui.add(egui::Label::new(RichText::new(&it.new).color(new_col)).truncate()));
+                    crate::checksum::cell(&mut child, c0 - 4.0, row_h, |ui| ui.add(egui::Label::new(RichText::new(format!("{icon}{}", it.name())).color(old_col)).truncate()).on_hover_text(it.path.to_string_lossy()));
+                    crate::checksum::cell(&mut child, c1, row_h, |ui| ui.add(egui::Label::new(RichText::new(&it.new).color(new_col)).truncate()));
                     child.add(egui::Label::new(RichText::new(st).small().color(new_col)).truncate());
                     if resp.clicked() {
                         clicked = Some(i);
@@ -1221,6 +1241,11 @@ impl Renamer {
                 }
             });
         });
+        if reset {
+            self.cols = None;
+        } else if widths != [c0, c1] {
+            self.cols = Some(widths);
+        }
         for i in toggles {
             self.items[i].on = !self.items[i].on;
         }

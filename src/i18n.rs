@@ -446,6 +446,7 @@ static TABLE: &[[&str; 4]] = &[
     ["· {} con problemas", "· {} with problems", "· {} com problemas", "· {} avec problèmes"],
     ["Nombre actual", "Current name", "Nome atual", "Nom actuel"],
     ["Nombre nuevo", "New name", "Nome novo", "Nouveau nom"],
+    ["Arrastra para cambiar el ancho; doble clic para ajustarlo a los nombres", "Drag to change the width; double-click to fit the names", "Arraste para mudar a largura; clique duplo para ajustar aos nomes", "Faites glisser pour changer la largeur ; double-clic pour ajuster aux noms"],
     ["Estado", "Status", "Estado", "État"],
     ["sin cambios", "unchanged", "sem alterações", "inchangé"],
     ["excluido", "excluded", "excluído", "exclu"],
