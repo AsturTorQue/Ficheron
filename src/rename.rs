@@ -945,19 +945,27 @@ impl Renamer {
         });
         ui.horizontal_wrapped(|ui| {
             row_label(ui, tr("RENOMBRAR"));
-            let mut set = |only: bool| {
+            // 0: only the matches, 1: unmark the matches, 2: everything but the matches.
+            let mut set = |how: u8| {
                 if let Ok(Some(re)) = &m {
                     for it in &mut self.items {
                         let hit = re.is_match(&it.name());
-                        it.on = if only { hit } else { it.on && !hit };
+                        it.on = match how {
+                            0 => hit,
+                            1 => it.on && !hit,
+                            _ => !hit,
+                        };
                     }
                 }
             };
             if ui.add_enabled(ok, egui::Button::new(tr("Solo estos"))).on_hover_text(tr("De la lista, renombra solo los que coinciden con el filtro")).clicked() {
-                set(true);
+                set(0);
             }
-            if ui.add_enabled(ok, egui::Button::new(tr("Excluir estos"))).on_hover_text(tr("De la lista, no renombra los que coinciden con el filtro")).clicked() {
-                set(false);
+            if ui.add_enabled(ok, egui::Button::new(tr("Excluir estos"))).on_hover_text(tr("Desmarca los que coinciden con el filtro; el resto se queda como está")).clicked() {
+                set(1);
+            }
+            if ui.add_enabled(ok, egui::Button::new(tr("Todos menos estos"))).on_hover_text(tr("Marca todos los de la lista excepto los que coinciden con el filtro")).clicked() {
+                set(2);
             }
             if ui.button(tr("Marcar todos")).clicked() {
                 for it in &mut self.items {
