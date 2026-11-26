@@ -1698,6 +1698,8 @@ static TABLE: &[[&str; 4]] = &[
     ["Bajar el elemento elegido", "Move the chosen item down", "Descer o elemento escolhido", "Descendre l'élément choisi"],
     ["RENOMBRAR", "RENAME", "RENOMEAR", "RENOMMER"],
     ["FILTRO", "FILTER", "FILTRO", "FILTRE"],
+    ["varios: separados por comas", "several: separated by commas", "vários: separados por vírgulas", "plusieurs : séparés par des virgules"],
+    ["Puedes poner varios separados por comas, por ejemplo: *.jpg, *.png, foto*", "You can enter several separated by commas, for example: *.jpg, *.png, foto*", "Podes pôr vários separados por vírgulas, por exemplo: *.jpg, *.png, foto*", "Vous pouvez en mettre plusieurs séparés par des virgules, par exemple : *.jpg, *.png, foto*"],
     ["Todos menos estos", "All but these", "Todos menos estes", "Tous sauf ceux-ci"],
     ["Marca todos los de la lista excepto los que coinciden con el filtro", "Tick everything in the list except the ones matching the filter", "Marca todos os da lista exceto os que correspondem ao filtro", "Coche tout dans la liste sauf ceux qui correspondent au filtre"],
     ["Desmarca los que coinciden con el filtro; el resto se queda como está", "Untick the ones matching the filter; the rest stay as they are", "Desmarca os que correspondem ao filtro; o resto fica como está", "Décoche ceux qui correspondent au filtre ; le reste ne change pas"],

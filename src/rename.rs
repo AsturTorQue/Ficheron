@@ -896,8 +896,11 @@ impl Renamer {
         let ok = matches!(m, Ok(Some(_)));
         ui.horizontal_wrapped(|ui| {
             row_label(ui, tr("FILTRO"));
-            ui.add(egui::TextEdit::singleline(&mut self.add_mask).hint_text(if self.add_regex { "\\.(jpe?g|png)$" } else { "*.jpg; foto*" }).desired_width(170.0).font(egui::TextStyle::Monospace))
-                .on_hover_text(tr("Al añadir una carpeta solo entra lo que coincide. Con «Solo estos» o «Excluir estos» se aplica también a lo que ya está en la lista."));
+            ui.add(egui::TextEdit::singleline(&mut self.add_mask).hint_text(if self.add_regex { "\\.(jpe?g|png)$" } else { "*.jpg, *.png, foto*" }).desired_width(170.0).font(egui::TextStyle::Monospace))
+                .on_hover_text(format!("{}\n{}", tr("Puedes poner varios separados por comas, por ejemplo: *.jpg, *.png, foto*"), tr("Al añadir una carpeta solo entra lo que coincide. Con «Solo estos» o «Excluir estos» se aplica también a lo que ya está en la lista.")));
+            if !self.add_regex {
+                ui.label(RichText::new(tr("varios: separados por comas")).small().color(theme::p().muted));
+            }
             ui.checkbox(&mut self.add_regex, tr("Expresión regular")).on_hover_text(tr("El filtro es una expresión regular en vez de comodines"));
             ui.checkbox(&mut self.add_recursive, tr("Incluir subcarpetas"));
             ui.checkbox(&mut self.add_folders, tr("Añadir también las carpetas"));
