@@ -170,6 +170,7 @@ struct Job {
 }
 
 pub struct ToolWindow {
+    target_picker: Option<crate::roots::Picker>,
     /// Frames this tool has been on screen as its own window (to bring it forward at first).
     frames_shown: u32,
     pub id: u64,
@@ -257,6 +258,7 @@ impl ToolWindow {
         let first_name = targets.first().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let now: chrono::DateTime<chrono::Local> = SystemTime::now().into();
         let mut t = ToolWindow {
+            target_picker: None,
             frames_shown: 0,
             id,
             kind,
@@ -444,7 +446,7 @@ impl ToolWindow {
                 ui.label(RichText::new(self.kind.description()).color(theme::p().sub));
                 ui.add_space(4.0);
                 if !big {
-                    self.targets_line(ui);
+                    self.targets_ui(ui, selection);
                 }
                 ui.separator();
                 match self.kind {
@@ -655,17 +657,44 @@ impl ToolWindow {
         }
     }
 
-    fn targets_line(&self, ui: &mut egui::Ui) {
+    /// What the tool works on, with «Examinar…» and «Usar los seleccionados» to change it:
+    /// the same line in every simple tool.
+    fn targets_ui(&mut self, ui: &mut egui::Ui, selection: &[PathBuf]) {
         let text = if self.targets.is_empty() {
             trf!("En la carpeta: {}", self.base.display())
         } else if self.targets.len() == 1 {
-            trf!("Elemento: {}", self.targets[0].display())
+            self.targets[0].display().to_string()
         } else {
             let names: Vec<String> = self.targets.iter().take(3).map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string()).collect();
             let more = if self.targets.len() > 3 { trf!(" y {} más", self.targets.len() - 3) } else { String::new() };
             trf!("{} elementos: {}{}", self.targets.len(), names.join(", "), more)
         };
-        ui.add(egui::Label::new(RichText::new(text).small()).truncate());
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            crate::ui_kit::label(ui, tr("Sobre"));
+            if ui.button(tr("📂 Examinar…")).clicked() {
+                let start = self.targets.first().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_else(|| self.base.clone());
+                self.target_picker = Some(crate::roots::Picker::new(start));
+            }
+            if !selection.is_empty() && selection != self.targets.as_slice() && ui.button(trf!("Usar los seleccionados ({})", selection.len())).clicked() {
+                self.targets = selection.to_vec();
+                changed = true;
+            }
+            ui.add(egui::Label::new(RichText::new(text)).truncate()).on_hover_text(self.targets.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join("\n"));
+        });
+        let ctx = ui.ctx().clone();
+        let picked = crate::roots::picker_window(&ctx, &format!("tool_targets_{}", self.id), &mut self.target_picker);
+        if !picked.is_empty() {
+            if let Some(p) = picked[0].parent() {
+                self.base = p.to_path_buf();
+            }
+            self.targets = picked;
+            self.target_picker = None;
+            changed = true;
+        }
+        if changed && self.kind == Kind::CopyList {
+            self.rebuild_list();
+        }
     }
 
     fn busy(&self) -> bool {
@@ -732,7 +761,7 @@ impl ToolWindow {
         };
         let size = fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
         ui.horizontal(|ui| {
-            ui.label(tr("Tamaño de cada parte:"));
+            crate::ui_kit::label(ui, tr("Tamaño de cada parte:").trim_end_matches([':', ' ']));
             ui.add(egui::DragValue::new(&mut self.part_mb).range(0.01..=100_000.0).speed(1.0).suffix(tr(" MB")));
             for (l, v) in [(tr("1,44 MB"), 1.44), (tr("100 MB"), 100.0), (tr("700 MB"), 700.0), (tr("4 GB"), 4095.0)] {
                 if ui.small_button(l).clicked() {
@@ -775,7 +804,7 @@ impl ToolWindow {
             self.name = strip_part_ext(&first);
         }
         ui.horizontal(|ui| {
-            ui.label(tr("Archivo resultante:"));
+            crate::ui_kit::label(ui, tr("Archivo resultante:").trim_end_matches([':', ' ']));
             ui.text_edit_singleline(&mut self.name);
         });
         if self.run_button(ui, tr("Unir"), false) {
@@ -804,7 +833,7 @@ impl ToolWindow {
         let total: u64 = files.iter().filter_map(|p| fs::metadata(p).ok()).map(|m| m.len()).sum();
         ui.label(trf!("{} archivo(s), {}", files.len(), human_size(total)));
         ui.horizontal(|ui| {
-            ui.label(tr("Pasadas de sobrescritura:"));
+            crate::ui_kit::label(ui, tr("Pasadas de sobrescritura:").trim_end_matches([':', ' ']));
             ui.add(egui::DragValue::new(&mut self.passes).range(1..=7));
         });
         ui.label(RichText::new(tr("En discos SSD y algunos sistemas de archivos no se garantiza que los datos desaparezcan del todo.")).small().color(theme::p().muted));
@@ -847,7 +876,7 @@ impl ToolWindow {
             return;
         }
         ui.horizontal(|ui| {
-            ui.label(tr("Nueva fecha de modificación:"));
+            crate::ui_kit::label(ui, tr("Nueva fecha de modificación:").trim_end_matches([':', ' ']));
             ui.add(egui::TextEdit::singleline(&mut self.date_text).desired_width(140.0)).on_hover_text(tr("dd/mm/aaaa hh:mm"));
             if ui.small_button(tr("Ahora")).clicked() {
                 let now: chrono::DateTime<chrono::Local> = SystemTime::now().into();
@@ -996,7 +1025,7 @@ impl ToolWindow {
             return;
         }
         ui.horizontal(|ui| {
-            ui.label(tr("Nombre de la carpeta:"));
+            crate::ui_kit::label(ui, tr("Nombre de la carpeta:").trim_end_matches([':', ' ']));
             ui.text_edit_singleline(&mut self.name);
         });
         let bad = self.name.trim().is_empty() || self.name.contains('/') || self.name.contains('\\');
@@ -1029,11 +1058,11 @@ impl ToolWindow {
             return;
         };
         ui.horizontal(|ui| {
-            ui.label(tr("Nombre del enlace:"));
+            crate::ui_kit::label(ui, tr("Nombre del enlace:").trim_end_matches([':', ' ']));
             ui.text_edit_singleline(&mut self.name);
         });
         ui.horizontal(|ui| {
-            ui.label(tr("Crear en:"));
+            crate::ui_kit::label(ui, tr("Crear en:").trim_end_matches([':', ' ']));
             ui.add(egui::TextEdit::singleline(&mut self.dest).hint_text(self.base.to_string_lossy()).desired_width(f32::INFINITY));
         });
         if self.run_button(ui, tr("Crear enlace"), false) {

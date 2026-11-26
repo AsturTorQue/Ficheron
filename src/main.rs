@@ -310,8 +310,6 @@ struct App {
     solo: bool,
     /// The file explorer is shown; otherwise the start screen with the utilities.
     explorer: bool,
-    /// A tool waiting for the files it works on (chosen in a picker from the start screen).
-    hub_pick: Option<(Kind, crate::roots::Picker)>,
     logo: Option<egui::TextureHandle>,
     /// Where the «Utilidades…» panel of the right-click menu is open.
     tool_picker: Option<egui::Pos2>,
@@ -366,6 +364,31 @@ fn appearance_menu(ui: &mut egui::Ui) {
         });
     }
     ui.separator();
+    ui.label(RichText::new(tr("Tamaño de la interfaz")).small().color(theme::p().sub));
+    ui.horizontal(|ui| {
+        let ctx = ui.ctx().clone();
+        let mut z = ctx.zoom_factor();
+        let tip = tr("También con Ctrl + y Ctrl − (Ctrl 0 vuelve al 100 %)");
+        if ui.button("−").on_hover_text(tip).clicked() {
+            z -= 0.1;
+        }
+        let mut pct = (z * 100.0).round();
+        if ui.add(egui::Slider::new(&mut pct, 50.0..=250.0).step_by(10.0).suffix(" %")).on_hover_text(tip).changed() {
+            z = pct / 100.0;
+        }
+        if ui.button("+").on_hover_text(tip).clicked() {
+            z += 0.1;
+        }
+        if ui.button("100 %").clicked() {
+            z = 1.0;
+        }
+        let z = z.clamp(0.5, 2.5);
+        if (z - ctx.zoom_factor()).abs() > 0.001 {
+            ctx.set_zoom_factor(z);
+            settings::set_zoom(z);
+        }
+    });
+    ui.separator();
     let mut ex = settings::start_with_explorer();
     if ui.checkbox(&mut ex, tr("Empezar en el explorador de archivos")).on_hover_text(tr("Si no, al abrir se ve la pantalla con todas las utilidades.")).changed() {
         settings::set_start_with_explorer(ex);
@@ -416,6 +439,7 @@ impl App {
             cc.egui_ctx.set_embed_viewports(true);
         }
         theme::apply(&cc.egui_ctx);
+        cc.egui_ctx.set_zoom_factor(settings::zoom());
         cc.egui_ctx.style_mut(|s| {
             s.spacing.item_spacing = egui::vec2(8.0, 6.0);
             s.spacing.button_padding = egui::vec2(8.0, 4.0);
@@ -467,7 +491,6 @@ impl App {
             tool_picker: None,
             solo: false,
             explorer: settings::start_with_explorer() || start_given,
-            hub_pick: None,
             logo: None,
             tools: vec![],
             next_tool: 1,
@@ -1238,14 +1261,11 @@ impl App {
 
     }
 
-    /// Opens a tool from the start screen. Tools that work on chosen files ask for them first.
+    /// Opens a tool from the start screen.
     fn hub_open(&mut self, k: Kind) {
-        if k.folder_ok() {
-            self.tools.push(ToolWindow::new(self.next_tool, k, vec![], self.cwd.clone()));
-            self.next_tool += 1;
-        } else {
-            self.hub_pick = Some((k, crate::roots::Picker::new(self.cwd.clone())));
-        }
+        // Every tool chooses its files itself («Examinar…»), so it opens straight away.
+        self.tools.push(ToolWindow::new(self.next_tool, k, vec![], self.cwd.clone()));
+        self.next_tool += 1;
     }
 
     /// The start screen: every utility, grouped, each with what it does.
@@ -1305,17 +1325,6 @@ impl App {
         });
         if let Some(k) = open {
             self.hub_open(k);
-        }
-        if let Some((k, pk)) = self.hub_pick.take() {
-            let mut slot = Some(pk);
-            let picked = crate::roots::picker_window(ctx, "hub_pick", &mut slot);
-            if !picked.is_empty() {
-                let base = picked[0].parent().map(Path::to_path_buf).unwrap_or_else(|| self.cwd.clone());
-                self.tools.push(ToolWindow::new(self.next_tool, k, picked, base));
-                self.next_tool += 1;
-                slot = None;
-            }
-            self.hub_pick = slot.map(|pk| (k, pk));
         }
     }
 
@@ -2294,6 +2303,8 @@ impl eframe::App for App {
             theme::apply(ctx);
         }
         self.handle_screenshot(ctx);
+        // Ctrl + / Ctrl − / Ctrl 0 change the size too: remember it for next time.
+        settings::set_zoom(ctx.zoom_factor());
         if self.solo {
             self.solo_update(ctx);
             return;
