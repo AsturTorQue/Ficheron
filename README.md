@@ -61,6 +61,13 @@ de `version` y haz push.
 
 [MIT](LICENSE)
 
+## Menú contextual del sistema
+
+Desde **Utilidades › Menú contextual del sistema…** (o `ficheron --install-menu` / `--uninstall-menu`) se añaden
+las herramientas al clic derecho del explorador de archivos, solo para tu usuario:
+Nautilus, Caja, Nemo y Dolphin en Linux; un submenú «Ficherón» y «Enviar a» en Windows; Acciones rápidas en macOS.
+Cada entrada ejecuta `ficheron --tool <herramienta> <archivos…>`.
+
 ## Opciones de línea de órdenes
 
 `ficheron [carpeta]` abre esa carpeta. `--screenshot archivo.png` guarda una captura y sale (para pruebas).

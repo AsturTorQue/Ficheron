@@ -11,6 +11,7 @@ mod crypt;
 mod grep;
 mod images;
 mod icon;
+mod integration;
 mod checksum;
 mod compare;
 mod emptydirs;
@@ -45,6 +46,15 @@ use i18n::tr;
 fn main() -> eframe::Result<()> {
     settings::load();
     let args: Vec<String> = std::env::args().collect();
+    // `--install-menu` / `--uninstall-menu`: the system's right-click menu, without opening the window.
+    if let Some(a) = args.iter().find(|a| *a == "--install-menu" || *a == "--uninstall-menu") {
+        let r = if a == "--install-menu" { integration::install() } else { integration::uninstall() };
+        match r {
+            Ok(done) => done.iter().for_each(|d| println!("{d}")),
+            Err(e) => eprintln!("{e}"),
+        }
+        return Ok(());
+    }
     // `--export-icon <carpeta>` writes the icon files used for packaging (png sizes and .ico).
     if let Some(p) = args.iter().position(|a| a == "--export-icon") {
         let dir = args.get(p + 1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("assets"));
@@ -94,6 +104,17 @@ fn main() -> eframe::Result<()> {
             // Open the batch rename tool on start (handy for trying it).
             open_rename = true;
             i += 1;
+        } else if args[i] == "--tool" && i + 1 < args.len() {
+            // From the system's right-click menu: `--tool <id> <files…>` opens that tool on them.
+            if let Some(kind) = integration::kind_of(&args[i + 1]) {
+                let paths: Vec<PathBuf> = args[i + 2..].iter().map(PathBuf::from).filter(|p| p.exists()).collect();
+                if let Some(first) = paths.first() {
+                    let only_folder = paths.len() == 1 && first.is_dir();
+                    start_dir = if only_folder { Some(first.clone()) } else { first.parent().map(Path::to_path_buf) };
+                }
+                let _ = LAUNCH.set((kind, paths));
+            }
+            break;
         } else if args[i] == "--screenshot" && i + 1 < args.len() {
             screenshot = Some(PathBuf::from(&args[i + 1]));
             i += 2;
@@ -175,6 +196,8 @@ fn software_friendly_wgpu() -> eframe::egui_wgpu::WgpuConfiguration {
 }
 
 const APP_NAME: &str = "Ficherón";
+/// A tool to open on start, asked for from the system's right-click menu.
+static LAUNCH: std::sync::OnceLock<(Kind, Vec<PathBuf>)> = std::sync::OnceLock::new();
 /// Matches `packaging/ficheron.desktop` so Wayland shows the program's own icon.
 const APP_ID: &str = "ficheron";
 
@@ -228,6 +251,7 @@ enum Action {
     SelectAll,
     SortBy(SortBy),
     QuickLook,
+    Integration,
     CloseQuickLook,
     NewTab(Option<PathBuf>),
     CloseTab(usize),
@@ -273,6 +297,8 @@ struct App {
     favorites: Vec<PathBuf>,
     preview: Option<(PathBuf, Option<String>)>,
     quick: Option<quicklook::QuickLook>,
+    /// The «Menú contextual del sistema» window: open, and what the last action said.
+    integration: Option<Option<(String, bool)>>,
     tools: Vec<ToolWindow>,
     next_tool: u64,
     screenshot: Option<PathBuf>,
@@ -401,6 +427,7 @@ impl App {
             favorites,
             preview: None,
             quick: None,
+            integration: None,
             tools: vec![],
             next_tool: 1,
             screenshot,
@@ -408,6 +435,13 @@ impl App {
             shot_requested: false,
         };
         app.reload();
+        if let Some((kind, paths)) = LAUNCH.get() {
+            // A folder alone (or the background of a folder) means «this folder»; files are the targets.
+            let targets = if paths.len() == 1 && paths[0].is_dir() && kind.folder_ok() && !matches!(kind, Kind::Compress | Kind::Checksum | Kind::Meta | Kind::Crypt | Kind::Images) { vec![] } else { paths.clone() };
+            app.selection = paths.iter().cloned().collect();
+            app.tools.push(ToolWindow::new(app.next_tool, *kind, targets, app.cwd.clone()));
+            app.next_tool += 1;
+        }
         // For checking the quick look in screenshots: FICHERON_QUICK=<file> opens it at start.
         if let Ok(p) = std::env::var("FICHERON_QUICK") {
             if let Some(e) = Entry::from_path(Path::new(&p)) {
@@ -752,6 +786,7 @@ impl App {
                 }
             }
             Action::CloseQuickLook => self.quick = None,
+            Action::Integration => self.integration = Some(None),
             Action::Properties => {
                 let e = self.selected_entries().first().map(|e| (*e).clone()).or_else(|| Entry::from_path(&self.cwd));
                 if let Some(entry) = e {
@@ -1048,6 +1083,57 @@ impl App {
         if ui.button(tr("🌐  Copiar ruta de red (UNC)")).on_hover_text(tr("Para carpetas compartidas SMB/NFS: \\\\servidor\\recurso\\carpeta")).clicked() {
             acts.push(Action::CopyNetPath);
             ui.close_menu();
+        }
+        ui.separator();
+        if ui.button(tr("🖱  Menú contextual del sistema…")).on_hover_text(tr("Añade las herramientas al clic derecho del explorador de archivos del sistema")).clicked() {
+            acts.push(Action::Integration);
+            ui.close_menu();
+        }
+    }
+
+    fn integration_window(&mut self, ctx: &egui::Context) {
+        let Some(mut msg) = self.integration.take() else { return };
+        let mut open = true;
+        egui::Window::new(tr("🖱 Menú contextual del sistema")).open(&mut open).collapsible(false).resizable(false).default_width(520.0).show(ctx, |ui| {
+            let system = if cfg!(windows) {
+                tr("En Windows aparece un submenú «Ficherón» al hacer clic derecho en archivos, carpetas y el fondo de una carpeta, y una entrada por herramienta en «Enviar a» (la que recibe todos los archivos seleccionados a la vez).")
+            } else if cfg!(target_os = "macos") {
+                tr("En macOS aparece cada herramienta como Acción rápida: clic derecho en el Finder › Acciones rápidas (o Servicios). Puede que tengas que activarlas en Ajustes del Sistema › Teclado › Funciones rápidas.")
+            } else {
+                tr("En Linux se añade un submenú «Ficherón» en Nautilus y Caja (Scripts), Nemo y Dolphin. Puede hacer falta cerrar y abrir el explorador de archivos.")
+            };
+            ui.label(system);
+            ui.add_space(4.0);
+            ui.label(RichText::new(tr("Herramientas que se añaden:")).small().strong().color(theme::p().sub));
+            ui.horizontal_wrapped(|ui| {
+                for (_, k) in integration::TOOLS {
+                    ui.label(RichText::new(format!("{} {}", k.icon(), k.label())).small());
+                }
+            });
+            ui.label(RichText::new(tr("Solo para tu usuario; no hace falta ser administrador.")).small().color(theme::p().muted));
+            ui.separator();
+            let on = integration::installed();
+            ui.horizontal(|ui| {
+                let label = if on { tr("✔ Actualizar en el menú contextual") } else { tr("➕ Añadir al menú contextual") };
+                if ui.add(egui::Button::new(RichText::new(label).color(Color32::WHITE).strong()).fill(theme::accent())).clicked() {
+                    msg = Some(match integration::install() {
+                        Ok(_) => (tr("Listo: ya aparece en el clic derecho del explorador de archivos.").to_string(), false),
+                        Err(e) => (trf!("No se pudo añadir: {}", e), true),
+                    });
+                }
+                if ui.add_enabled(on, egui::Button::new(tr("Quitar del menú contextual"))).clicked() {
+                    msg = Some(match integration::uninstall() {
+                        Ok(_) => (tr("Quitado del menú contextual.").to_string(), false),
+                        Err(e) => (trf!("No se pudo quitar: {}", e), true),
+                    });
+                }
+            });
+            if let Some((m, err)) = &msg {
+                ui.label(RichText::new(m).color(if *err { theme::p().danger } else { theme::p().ok }));
+            }
+        });
+        if open {
+            self.integration = Some(msg);
         }
     }
 
@@ -2009,6 +2095,7 @@ impl eframe::App for App {
             }
         }
 
+        self.integration_window(ctx);
         self.dialogs(ctx);
 
         for a in acts {
