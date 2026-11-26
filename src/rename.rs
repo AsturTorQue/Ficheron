@@ -964,6 +964,11 @@ impl Renamer {
                     it.on = true;
                 }
             }
+            if ui.button(tr("Ninguno")).on_hover_text(tr("Desmarca todos: no se renombra nada hasta que marques alguno")).clicked() {
+                for it in &mut self.items {
+                    it.on = false;
+                }
+            }
             if let Err(e) = &m {
                 ui.label(RichText::new(trf!("Expresión no válida: {}", e)).small().color(theme::p().danger));
             } else if ok {
