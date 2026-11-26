@@ -252,6 +252,7 @@ enum Action {
     SortBy(SortBy),
     QuickLook,
     Integration,
+    ToolPicker(egui::Pos2),
     CloseQuickLook,
     NewTab(Option<PathBuf>),
     CloseTab(usize),
@@ -299,6 +300,8 @@ struct App {
     quick: Option<quicklook::QuickLook>,
     /// The «Menú contextual del sistema» window: open, and what the last action said.
     integration: Option<Option<(String, bool)>>,
+    /// Where the «Utilidades…» panel of the right-click menu is open.
+    tool_picker: Option<egui::Pos2>,
     tools: Vec<ToolWindow>,
     next_tool: u64,
     screenshot: Option<PathBuf>,
@@ -428,6 +431,7 @@ impl App {
             preview: None,
             quick: None,
             integration: None,
+            tool_picker: None,
             tools: vec![],
             next_tool: 1,
             screenshot,
@@ -441,6 +445,10 @@ impl App {
             app.selection = paths.iter().cloned().collect();
             app.tools.push(ToolWindow::new(app.next_tool, *kind, targets, app.cwd.clone()));
             app.next_tool += 1;
+        }
+        // For checking the «Utilidades…» panel in screenshots.
+        if std::env::var("FICHERON_TOOLPICKER").is_ok() {
+            app.tool_picker = Some(egui::pos2(260.0, 160.0));
         }
         // For checking the quick look in screenshots: FICHERON_QUICK=<file> opens it at start.
         if let Ok(p) = std::env::var("FICHERON_QUICK") {
@@ -787,6 +795,7 @@ impl App {
             }
             Action::CloseQuickLook => self.quick = None,
             Action::Integration => self.integration = Some(None),
+            Action::ToolPicker(p) => self.tool_picker = Some(p),
             Action::Properties => {
                 let e = self.selected_entries().first().map(|e| (*e).clone()).or_else(|| Entry::from_path(&self.cwd));
                 if let Some(entry) = e {
@@ -1091,6 +1100,39 @@ impl App {
         }
     }
 
+    /// The tools, grouped in columns, in a panel above everything else.
+    fn tool_picker(&mut self, ctx: &egui::Context, acts: &mut Vec<Action>) {
+        let Some(pos) = self.tool_picker else { return };
+        let mut close = false;
+        let has_sel = !self.selection.is_empty();
+        let area = egui::Area::new(egui::Id::new("tool_picker")).order(egui::Order::Foreground).fixed_pos(pos).constrain(true).show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                let what = if has_sel { trf!("Se aplican a {} elemento(s) seleccionado(s)", self.selection.len()) } else { trf!("Se aplican a la carpeta «{}»", self.cwd.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "/".into())) };
+                ui.label(RichText::new(what).small().color(theme::p().muted));
+                ui.separator();
+                ui.horizontal_top(|ui| {
+                    for (group, kinds) in tools::GROUPS {
+                        ui.vertical(|ui| {
+                            ui.set_min_width(190.0);
+                            ui.label(RichText::new(tr(group)).small().strong().color(theme::p().sub));
+                            for k in kinds.iter().copied() {
+                                let enabled = has_sel || k.folder_ok();
+                                if ui.add_enabled(enabled, egui::Button::new(format!("{}  {}", k.icon(), k.label())).frame(false)).on_hover_text(k.description()).on_disabled_hover_text(tr("Selecciona primero algún elemento")).clicked() {
+                                    acts.push(Action::Tool(k));
+                                    close = true;
+                                }
+                            }
+                        });
+                    }
+                });
+            });
+        });
+        let outside = ctx.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().map(|p| !area.response.rect.contains(p)).unwrap_or(false));
+        if close || outside || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.tool_picker = None;
+        }
+    }
+
     fn integration_window(&mut self, ctx: &egui::Context) {
         let Some(mut msg) = self.integration.take() else { return };
         let mut open = true;
@@ -1344,7 +1386,12 @@ impl App {
             ui.close_menu();
         }
         ui.separator();
-        ui.menu_button(RichText::new(tr("🔧 Utilidades")).color(theme::accent()), |ui| self.tools_menu(ui, acts));
+        // Not a submenu: the tool list is long, and a long submenu can open under the menu it
+        // comes from. It opens as its own panel where the menu was.
+        if ui.button(RichText::new(tr("🔧 Utilidades…")).color(theme::accent())).clicked() {
+            acts.push(Action::ToolPicker(ui.ctx().pointer_latest_pos().unwrap_or(ui.min_rect().left_top())));
+            ui.close_menu();
+        }
         if ui.button(tr("ℹ Propiedades")).clicked() {
             acts.push(Action::Properties);
             ui.close_menu();
@@ -1373,7 +1420,12 @@ impl App {
             acts.push(Action::Refresh);
             ui.close_menu();
         }
-        ui.menu_button(RichText::new(tr("🔧 Utilidades")).color(theme::accent()), |ui| self.tools_menu(ui, acts));
+        // Not a submenu: the tool list is long, and a long submenu can open under the menu it
+        // comes from. It opens as its own panel where the menu was.
+        if ui.button(RichText::new(tr("🔧 Utilidades…")).color(theme::accent())).clicked() {
+            acts.push(Action::ToolPicker(ui.ctx().pointer_latest_pos().unwrap_or(ui.min_rect().left_top())));
+            ui.close_menu();
+        }
         if ui.button(tr("ℹ Propiedades de la carpeta")).clicked() {
             acts.push(Action::Properties);
             ui.close_menu();
@@ -2096,6 +2148,7 @@ impl eframe::App for App {
         }
 
         self.integration_window(ctx);
+        self.tool_picker(ctx, &mut acts);
         self.dialogs(ctx);
 
         for a in acts {

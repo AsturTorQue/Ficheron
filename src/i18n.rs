@@ -1713,6 +1713,7 @@ static TABLE: &[[&str; 4]] = &[
     ["Quitado del menú contextual.", "Removed from the context menu.", "Removido do menu de contexto.", "Retiré du menu contextuel."],
     ["No se pudo quitar: {}", "Couldn't remove it: {}", "Não foi possível remover: {}", "Impossible de retirer : {}"],
     ["No se encuentra la carpeta personal", "The home folder can't be found", "Não se encontra a pasta pessoal", "Dossier personnel introuvable"],
+    ["🔧 Utilidades…", "🔧 Tools…", "🔧 Utilitários…", "🔧 Outils…"],
     ["Duplicar pestaña", "Duplicate tab", "Duplicar separador", "Dupliquer l'onglet"],
     ["… (solo se muestra el principio)", "… (only the beginning is shown)", "… (só se mostra o início)", "… (seul le début est affiché)"],
     ["… y {} más", "… and {} more", "… e mais {}", "… et {} de plus"],
