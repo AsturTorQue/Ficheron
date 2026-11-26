@@ -259,8 +259,6 @@ pub struct Renamer {
     /// The browsers behind «Elegir carpeta…» and «Elegir archivos…».
     folder_browser: Option<crate::dupes::Browser>,
     file_picker: Option<crate::roots::Picker>,
-    mark_text: String,
-    mark_regex: bool,
     history: Vec<Batch>,
     preset_name: String,
     undo: Vec<Vec<(PathBuf, PathBuf)>>,
@@ -287,8 +285,6 @@ impl Renamer {
             cols: None,
             folder_browser: None,
             file_picker: None,
-            mark_text: String::new(),
-            mark_regex: false,
             history: load_history(),
             preset_name: String::new(),
             undo: vec![],
@@ -894,10 +890,14 @@ impl Renamer {
                 self.file_picker = Some(crate::roots::Picker::new(start));
             }
         });
-        // 2. What a folder brings: the same filter controls as everywhere else.
+        // 2. One filter for both jobs: it decides what a folder brings into the list, and the
+        // buttons beside it mark which of the files already listed get renamed.
+        let m = name_matcher(&self.add_mask.replace(',', ";"), self.add_regex);
+        let ok = matches!(m, Ok(Some(_)));
         ui.horizontal_wrapped(|ui| {
-            row_label(ui, tr("DE LAS CARPETAS"));
-            ui.add(egui::TextEdit::singleline(&mut self.add_mask).hint_text(if self.add_regex { "\\.(jpe?g|png)$" } else { tr("solo: *.jpg; *.png") }).desired_width(170.0).font(egui::TextStyle::Monospace));
+            row_label(ui, tr("FILTRO"));
+            ui.add(egui::TextEdit::singleline(&mut self.add_mask).hint_text(if self.add_regex { "\\.(jpe?g|png)$" } else { "*.jpg; foto*" }).desired_width(170.0).font(egui::TextStyle::Monospace))
+                .on_hover_text(tr("Al añadir una carpeta solo entra lo que coincide. Con «Solo estos» o «Excluir estos» se aplica también a lo que ya está en la lista."));
             ui.checkbox(&mut self.add_regex, tr("Expresión regular")).on_hover_text(tr("El filtro es una expresión regular en vez de comodines"));
             ui.checkbox(&mut self.add_recursive, tr("Incluir subcarpetas"));
             ui.checkbox(&mut self.add_folders, tr("Añadir también las carpetas"));
@@ -944,11 +944,7 @@ impl Renamer {
             }
         });
         ui.horizontal_wrapped(|ui| {
-            row_label(ui, tr("RENOMBRAR SOLO"));
-            ui.add(egui::TextEdit::singleline(&mut self.mark_text).hint_text(if self.mark_regex { "^IMG_\\d+" } else { "*.jpg; foto*" }).desired_width(170.0).font(egui::TextStyle::Monospace));
-            ui.checkbox(&mut self.mark_regex, tr("Expresión regular"));
-            let m = name_matcher(&self.mark_text, self.mark_regex);
-            let ok = matches!(m, Ok(Some(_)));
+            row_label(ui, tr("RENOMBRAR"));
             let mut set = |only: bool| {
                 if let Ok(Some(re)) = &m {
                     for it in &mut self.items {
@@ -957,10 +953,10 @@ impl Renamer {
                     }
                 }
             };
-            if ui.add_enabled(ok, egui::Button::new(tr("Solo estos"))).on_hover_text(tr("Renombra solo los que coinciden")).clicked() {
+            if ui.add_enabled(ok, egui::Button::new(tr("Solo estos"))).on_hover_text(tr("De la lista, renombra solo los que coinciden con el filtro")).clicked() {
                 set(true);
             }
-            if ui.add_enabled(ok, egui::Button::new(tr("Excluir estos"))).on_hover_text(tr("No renombra los que coinciden")).clicked() {
+            if ui.add_enabled(ok, egui::Button::new(tr("Excluir estos"))).on_hover_text(tr("De la lista, no renombra los que coinciden con el filtro")).clicked() {
                 set(false);
             }
             if ui.button(tr("Marcar todos")).clicked() {
