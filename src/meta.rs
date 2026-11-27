@@ -190,14 +190,23 @@ fn set_or_clear(m: &mut ExifMeta, v: String, set: ExifTag, clear: ExifTag) {
 fn edit_audio(path: &Path, e: &Edits) -> Result<(), String> {
     use lofty::config::WriteOptions;
     let mut tf = lofty::read_from_path(path).map_err(|e| e.to_string())?;
-    if tf.primary_tag().is_none() && tf.first_tag().is_none() {
-        let t = lofty::tag::Tag::new(tf.primary_tag_type());
+    // The format's main kind of tag (ID3v2 for MP3, Vorbis comments for FLAC…). A file that
+    // only has another kind (an old ID3v1, APE…) gets the main one, starting from what the
+    // other already says, so nothing visible is lost.
+    if tf.primary_tag().is_none() {
+        let mut t = lofty::tag::Tag::new(tf.primary_tag_type());
+        if let Some(other) = tf.first_tag() {
+            for item in other.items() {
+                t.push(item.clone());
+            }
+        }
         tf.insert_tag(t);
     }
-    let tag = tf.primary_tag_mut().or_else(|| None);
-    let tag = match tag {
+    // Otherwise any tag the file has and the format accepts.
+    let kind = if tf.primary_tag().is_some() { Some(tf.primary_tag_type()) } else { tf.first_tag().map(|t| t.tag_type()) };
+    let tag = match kind.and_then(|k| tf.tag_mut(k)) {
         Some(t) => t,
-        None => return Err(tr("este formato no admite etiquetas").to_string()),
+        None => return Err(trf!("este formato ({}) no admite etiquetas", format!("{:?}", tf.file_type()))),
     };
     for (id, v) in &e.set {
         let v = v.trim();
@@ -1043,6 +1052,20 @@ mod tests {
         let s = summary(&w);
         assert!(s.has_meta && s.what == "Ana — Canción", "{:?}", s.what);
         assert!(edit_audio(&w, &Edits { set: vec![("year".into(), "x".into())] }).is_err());
+        // A file that only has a tag of another kind (here ID3v2 in a WAV, whose main one is
+        // RIFF INFO) can still be edited, keeping what that tag said.
+        clean_file(&w, CleanOpts { gps_only: false, keep_orientation: true }).unwrap();
+        {
+            let mut tf = lofty::read_from_path(&w).unwrap();
+            let mut t = lofty::tag::Tag::new(lofty::tag::TagType::Id3v2);
+            t.set_artist("Luis".into());
+            tf.insert_tag(t);
+            tf.save_to_path(&w, lofty::config::WriteOptions::default()).unwrap();
+        }
+        edit_audio(&w, &Edits { set: vec![("year".into(), "1999".into())] }).unwrap();
+        let tf = lofty::read_from_path(&w).unwrap();
+        let t = tf.primary_tag().unwrap();
+        assert_eq!((t.year(), t.artist().map(|a| a.to_string())), (Some(1999), Some("Luis".to_string())));
         clean_file(&w, CleanOpts { gps_only: false, keep_orientation: true }).unwrap();
         assert!(!summary(&w).has_meta);
         assert!(clean_file(&w, CleanOpts { gps_only: true, keep_orientation: false }).is_err());

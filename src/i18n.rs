@@ -1704,6 +1704,7 @@ static TABLE: &[[&str; 4]] = &[
     ["Desmarca los que coinciden con el filtro; el resto se queda como está", "Untick the ones matching the filter; the rest stay as they are", "Desmarca os que correspondem ao filtro; o resto fica como está", "Décoche ceux qui correspondent au filtre ; le reste ne change pas"],
     ["Desmarca todos: no se renombra nada hasta que marques alguno", "Untick all: nothing is renamed until you tick some", "Desmarca todos: nada é renomeado até marcares algum", "Tout décocher : rien n'est renommé tant que vous n'en cochez pas"],
     ["Ninguno", "None", "Nenhum", "Aucun"],
+    ["este formato ({}) no admite etiquetas", "this format ({}) doesn't support tags", "este formato ({}) não admite etiquetas", "ce format ({}) n'accepte pas d'étiquettes"],
     ["Cambiar en", "Change in", "Alterar em", "Modifier dans"],
     ["Solo «{}»", "Only «{}»", "Só «{}»", "Seulement «{}»"],
     ["Los campos muestran los valores de este archivo: cambia solo lo que quieras.", "The fields show this file's values: change only what you want.", "Os campos mostram os valores deste ficheiro: altera só o que quiseres.", "Les champs montrent les valeurs de ce fichier : changez seulement ce que vous voulez."],
