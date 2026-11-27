@@ -315,7 +315,7 @@ impl TreeTool {
     }
 
     fn start(&mut self) {
-        let filter = match crate::rename::name_matcher(&self.filter.replace(',', ";"), self.regex) {
+        let filter = match crate::rename::name_matcher(&self.filter, self.regex) {
             Ok(f) => f,
             Err(e) => {
                 self.status = Some((trf!("Expresión no válida: {}", e), true));

@@ -242,7 +242,7 @@ impl Searcher {
             whole: false,
             include: String::new(),
             exclude: String::new(),
-            exclude_dirs: ".git; node_modules; target; .cache".into(),
+            exclude_dirs: ".git, node_modules, target, .cache".into(),
             name_regex: false,
             recursive: true,
             hidden: false,
@@ -391,10 +391,10 @@ impl Searcher {
         ui.add_space(2.0);
         egui::Grid::new("grep_filters").num_columns(2).spacing([10.0, 4.0]).show(ui, |ui| {
             crate::ui_kit::label(ui, tr("Incluir solo"));
-            ui.add(egui::TextEdit::singleline(&mut self.include).hint_text(if self.name_regex { "\\.(txt|md|rs)$" } else { "*.txt; *.md; *.rs" }).desired_width(f32::INFINITY)).on_hover_text(tr("Patrones de nombre separados por «;», con * y ?. Vacío = todos los archivos."));
+            ui.add(egui::TextEdit::singleline(&mut self.include).hint_text(if self.name_regex { "\\.(txt|md|rs)$" } else { "*.txt, *.md, *.rs" }).desired_width(f32::INFINITY)).on_hover_text(tr("Patrones de nombre separados por comas, con * y ?. Vacío = todos los archivos."));
             ui.end_row();
             crate::ui_kit::label(ui, tr("Excluir"));
-            ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text(if self.name_regex { "\\.min\\.js$|\\.log$" } else { "*.min.js; *.log" }).desired_width(f32::INFINITY));
+            ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text(if self.name_regex { "\\.min\\.js$|\\.log$" } else { "*.min.js, *.log" }).desired_width(f32::INFINITY));
             ui.end_row();
             crate::ui_kit::label(ui, tr("Saltar carpetas"));
             ui.add(egui::TextEdit::singleline(&mut self.exclude_dirs).desired_width(f32::INFINITY));

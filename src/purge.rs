@@ -32,15 +32,15 @@ fn set(p: &mut Purge, patterns: &str, exclude: &str, files: bool, folders: bool)
 }
 
 const TEMPLATES: [Template; 11] = [
-    ("🕓 Archivos temporales", "*.tmp, *.temp, ~*, *~, bloqueos y archivos de intercambio de editores.", |p| set(p, "*.tmp; *.temp; ~*; *~; .~lock.*#; *.swp; *.swo", "", true, false)),
-    ("💾 Copias de seguridad automáticas", "*.bak, *.old, *.orig, *.backup", |p| set(p, "*.bak; *.old; *.orig; *.backup; *.bkp", "", true, false)),
-    ("🗑 Basura del sistema", "Thumbs.db, desktop.ini, .DS_Store, ._*", |p| set(p, "Thumbs.db; desktop.ini; .DS_Store; ._*; ehthumbs.db", "", true, false)),
-    ("📜 Registros (logs)", "*.log y *.log.1, *.log.2…", |p| set(p, "*.log; *.log.*", "", true, false)),
-    ("💥 Informes de fallos", "core, *.dmp, *.crash, hs_err_pid*", |p| set(p, "core; core.*; *.dmp; *.crash; hs_err_pid*", "", true, false)),
-    ("⬇ Descargas incompletas", "*.part, *.crdownload, *.download, *.partial", |p| set(p, "*.part; *.crdownload; *.download; *.partial; *.!ut", "", true, false)),
-    ("📄 Temporales de Office", "~$*, *.wbk, .~lock.*", |p| set(p, "~$*; *.wbk; .~lock.*#", "", true, false)),
-    ("🔧 Restos de compilación", "*.o, *.obj, *.pyc, *.class, *.pdb y carpetas __pycache__", |p| set(p, "*.o; *.obj; *.pyc; *.pyo; *.class; *.pdb; __pycache__", "", true, true)),
-    ("📦 Carpetas de dependencias", "node_modules, target, .gradle, venv, __pycache__ (carpetas enteras)", |p| set(p, "node_modules; target; .gradle; __pycache__; .pytest_cache; .mypy_cache", "", false, true)),
+    ("🕓 Archivos temporales", "*.tmp, *.temp, ~*, *~, bloqueos y archivos de intercambio de editores.", |p| set(p, "*.tmp, *.temp, ~*, *~, .~lock.*#, *.swp, *.swo", "", true, false)),
+    ("💾 Copias de seguridad automáticas", "*.bak, *.old, *.orig, *.backup", |p| set(p, "*.bak, *.old, *.orig, *.backup, *.bkp", "", true, false)),
+    ("🗑 Basura del sistema", "Thumbs.db, desktop.ini, .DS_Store, ._*", |p| set(p, "Thumbs.db, desktop.ini, .DS_Store, ._*, ehthumbs.db", "", true, false)),
+    ("📜 Registros (logs)", "*.log y *.log.1, *.log.2…", |p| set(p, "*.log, *.log.*", "", true, false)),
+    ("💥 Informes de fallos", "core, *.dmp, *.crash, hs_err_pid*", |p| set(p, "core, core.*, *.dmp, *.crash, hs_err_pid*", "", true, false)),
+    ("⬇ Descargas incompletas", "*.part, *.crdownload, *.download, *.partial", |p| set(p, "*.part, *.crdownload, *.download, *.partial, *.!ut", "", true, false)),
+    ("📄 Temporales de Office", "~$*, *.wbk, .~lock.*", |p| set(p, "~$*, *.wbk, .~lock.*#", "", true, false)),
+    ("🔧 Restos de compilación", "*.o, *.obj, *.pyc, *.class, *.pdb y carpetas __pycache__", |p| set(p, "*.o, *.obj, *.pyc, *.pyo, *.class, *.pdb, __pycache__", "", true, true)),
+    ("📦 Carpetas de dependencias", "node_modules, target, .gradle, venv, __pycache__ (carpetas enteras)", |p| set(p, "node_modules, target, .gradle, __pycache__, .pytest_cache, .mypy_cache", "", false, true)),
     ("📑 Archivos «copia»", "informe (copia).doc, informe - copia.doc, informe (1).doc", |p| {
         set(p, "^.*(\\s*\\(\\d+\\)|\\s*[-_]\\s*(copia|copy)(\\s*\\(?\\d+\\)?)?|\\s+\\((copia|copy)[^)]*\\))\\.[^.]+$", "", true, false);
         p.regex = true;
@@ -163,7 +163,7 @@ fn compile(text: &str, regex: bool, on_path: bool, case: bool) -> Result<Option<
     let parts: Vec<String> = if regex {
         text.lines().map(str::trim).filter(|l| !l.is_empty()).map(|l| format!("(?:{l})")).collect()
     } else {
-        text.split([';', '\n'])
+        text.split([';', ',', '\n'])
             .map(str::trim)
             .filter(|p| !p.is_empty())
             .map(|p| {
@@ -306,7 +306,7 @@ impl Purge {
         Purge {
             roots,
             root_input: String::new(),
-            patterns: "*.tmp; *.bak; *~".into(),
+            patterns: "*.tmp, *.bak, *~".into(),
             exclude: String::new(),
             regex: false,
             on_path: false,
@@ -618,14 +618,14 @@ impl Purge {
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.set_width(520.0);
-                let hint = if self.regex { "\\.(tmp|bak)$\n^~\\$" } else { "*.tmp; *.bak; *~" };
+                let hint = if self.regex { "\\.(tmp|bak)$\n^~\\$" } else { "*.tmp, *.bak, *~" };
                 ui.add(egui::TextEdit::multiline(&mut self.patterns).hint_text(hint).font(egui::TextStyle::Monospace).desired_rows(3).desired_width(f32::INFINITY));
                 ui.horizontal(|ui| {
                     crate::ui_kit::label(ui, tr("Proteger"));
                     ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text(tr("patrones que nunca se borran, p. ej. importante*")).desired_width(430.0))
                         .on_hover_text(tr("Lo que coincida con estos patrones no se borra; si es una carpeta, tampoco nada de lo que hay dentro."));
                 });
-                ui.label(RichText::new(tr(if self.regex { "Una expresión regular por línea; basta que coincida una parte del nombre." } else { "Varios patrones separados por «;» o en líneas distintas. * es cualquier texto y ? un carácter." })).small().color(theme::p().muted));
+                ui.label(RichText::new(tr(if self.regex { "Una expresión regular por línea; basta que coincida una parte del nombre." } else { "Varios patrones separados por comas o en líneas distintas. * es cualquier texto y ? un carácter." })).small().color(theme::p().muted));
             });
             ui.add_space(12.0);
             ui.vertical(|ui| {
@@ -671,7 +671,7 @@ impl Purge {
                     });
                     ui.horizontal(|ui| {
                         crate::ui_kit::label(ui, tr("Saltar carpetas"));
-                        ui.add(egui::TextEdit::singleline(&mut self.skip_dirs).desired_width(200.0)).on_hover_text(tr("Nombres de carpetas que no se recorren, con comodines, separados por «;»"));
+                        ui.add(egui::TextEdit::singleline(&mut self.skip_dirs).desired_width(200.0)).on_hover_text(tr("Nombres de carpetas que no se recorren, con comodines, separados por comas"));
                     });
                     ui.checkbox(&mut self.skip_hidden, tr("Saltar archivos y carpetas ocultos"));
                     ui.checkbox(&mut self.readonly, tr("Incluir archivos de solo lectura"));

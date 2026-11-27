@@ -143,7 +143,7 @@ pub struct Integrity {
 impl Integrity {
     pub fn new(targets: Vec<PathBuf>) -> Integrity {
         let mut src = Sources::new("integrity_src", targets);
-        src.exclude_dirs = ".git; node_modules; .cache".into();
+        src.exclude_dirs = ".git, node_modules, .cache".into();
         Integrity { src, job: None, rows: vec![], only_problems: true, status: None }
     }
 

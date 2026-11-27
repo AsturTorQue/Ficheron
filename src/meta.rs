@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
 
-const INCLUDE: &str = "*.jpg; *.jpeg; *.png; *.tif; *.tiff; *.webp; *.heic; *.avif; *.mp3; *.flac; *.m4a; *.ogg; *.opus; *.wav; *.aiff";
+const INCLUDE: &str = "*.jpg, *.jpeg, *.png, *.tif, *.tiff, *.webp, *.heic, *.avif, *.mp3, *.flac, *.m4a, *.ogg, *.opus, *.wav, *.aiff";
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Kind {

@@ -436,7 +436,7 @@ impl TextConv {
             backup: true,
             dest_other: false,
             conflict: 0,
-            include: "*.txt; *.md; *.csv; *.json; *.xml; *.html; *.css; *.js; *.ts; *.py; *.rs; *.c; *.h; *.cpp; *.java; *.yml; *.yaml; *.toml; *.ini; *.log; *.sh; *.bat; *.sql".into(),
+            include: "*.txt, *.md, *.csv, *.json, *.xml, *.html, *.css, *.js, *.ts, *.py, *.rs, *.c, *.h, *.cpp, *.java, *.yml, *.yaml, *.toml, *.ini, *.log, *.sh, *.bat, *.sql".into(),
             name_regex: false,
             recursive: true,
             job: None,
@@ -598,7 +598,7 @@ impl TextConv {
         });
         ui.horizontal(|ui| {
             crate::ui_kit::label(ui, tr("De las carpetas, solo"));
-            ui.add(egui::TextEdit::singleline(&mut self.include).desired_width(520.0)).on_hover_text(tr("Patrones de nombre separados por «;». Los archivos que añadas uno a uno se usan siempre."));
+            ui.add(egui::TextEdit::singleline(&mut self.include).desired_width(520.0)).on_hover_text(tr("Patrones de nombre separados por comas. Los archivos que añadas uno a uno se usan siempre."));
         });
     }
 

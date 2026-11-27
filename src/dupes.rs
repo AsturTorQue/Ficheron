@@ -162,7 +162,7 @@ impl Dupes {
             browser: None,
             include: String::new(),
             exclude: String::new(),
-            exclude_dirs: ".git; node_modules; .cache; $RECYCLE.BIN; .Trash*".into(),
+            exclude_dirs: ".git, node_modules, .cache, $RECYCLE.BIN, .Trash*".into(),
             pat_regex: false,
             skip_hidden: true,
             skip_empty: true,
@@ -593,19 +593,19 @@ impl Dupes {
                 ui.label(RichText::new(tr("FILTROS")).small().strong().color(theme::p().sub));
                 size_field(ui, tr("Tamaño mínimo"), &mut self.min_text, "1 KB");
                 size_field(ui, tr("Tamaño máximo"), &mut self.max_text, tr("sin límite"));
-                let hint_inc = if self.pat_regex { "\\.(jpe?g|png)$" } else { "*.jpg; *.png" };
+                let hint_inc = if self.pat_regex { "\\.(jpe?g|png)$" } else { "*.jpg, *.png" };
                 ui.horizontal(|ui| {
                     crate::ui_kit::label(ui, tr("Incluir"));
                     ui.add(egui::TextEdit::singleline(&mut self.include).hint_text(hint_inc).desired_width(220.0));
                 });
                 ui.horizontal(|ui| {
                     crate::ui_kit::label(ui, tr("Excluir"));
-                    ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text(if self.pat_regex { "\\.tmp$" } else { "*.tmp; thumbs.db" }).desired_width(220.0));
+                    ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text(if self.pat_regex { "\\.tmp$" } else { "*.tmp, thumbs.db" }).desired_width(220.0));
                 });
                 ui.checkbox(&mut self.pat_regex, tr("Los filtros son expresiones regulares"));
                 ui.horizontal(|ui| {
                     crate::ui_kit::label(ui, tr("Saltar carpetas"));
-                    ui.add(egui::TextEdit::singleline(&mut self.exclude_dirs).desired_width(220.0)).on_hover_text(tr("Nombres de carpetas que no se recorren, con comodines, separados por «;»"));
+                    ui.add(egui::TextEdit::singleline(&mut self.exclude_dirs).desired_width(220.0)).on_hover_text(tr("Nombres de carpetas que no se recorren, con comodines, separados por comas"));
                 });
                 ui.horizontal(|ui| {
                     crate::ui_kit::label(ui, tr("Antigüedad mínima"));

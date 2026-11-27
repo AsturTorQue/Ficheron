@@ -117,7 +117,7 @@ fn patterns(ui: &mut egui::Ui) {
             ("*.jpg", tr("los que terminan en .jpg")),
             ("foto*", tr("los que empiezan por «foto»")),
             ("*2024*", tr("los que llevan «2024» en cualquier parte")),
-            ("*.jpg, *.png", tr("varios patrones: separados por comas o por «;»")),
+            ("*.jpg, *.png", tr("varios patrones: separados por comas")),
         ] {
             ui.label(RichText::new(p).monospace().strong());
             ui.label(m);

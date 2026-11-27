@@ -78,7 +78,7 @@ impl Default for Opts {
             include: String::new(),
             exclude: String::new(),
             pat_regex: false,
-            exclude_dirs: "$RECYCLE.BIN; System Volume Information; .Trash*; .Spotlight-V100; .fseventsd".into(),
+            exclude_dirs: "$RECYCLE.BIN, System Volume Information, .Trash*, .Spotlight-V100, .fseventsd".into(),
             skip_hidden: false,
             min_text: String::new(),
             max_text: String::new(),
@@ -1183,19 +1183,19 @@ impl Syncer {
             ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(400.0);
-                    let hint_inc = if self.o.pat_regex { "\\.(jpe?g|png)$" } else { "*.jpg; *.png" };
+                    let hint_inc = if self.o.pat_regex { "\\.(jpe?g|png)$" } else { "*.jpg, *.png" };
                     ui.horizontal(|ui| {
                         crate::ui_kit::label(ui, tr("Incluir"));
                         ui.add(egui::TextEdit::singleline(&mut self.o.include).hint_text(hint_inc).desired_width(260.0));
                     });
                     ui.horizontal(|ui| {
                         crate::ui_kit::label(ui, tr("Excluir"));
-                        ui.add(egui::TextEdit::singleline(&mut self.o.exclude).hint_text(if self.o.pat_regex { "\\.tmp$" } else { "*.tmp; thumbs.db" }).desired_width(260.0));
+                        ui.add(egui::TextEdit::singleline(&mut self.o.exclude).hint_text(if self.o.pat_regex { "\\.tmp$" } else { "*.tmp, thumbs.db" }).desired_width(260.0));
                     });
                     ui.checkbox(&mut self.o.pat_regex, tr("Los filtros son expresiones regulares"));
                     ui.horizontal(|ui| {
                         crate::ui_kit::label(ui, tr("Saltar carpetas"));
-                        ui.add(egui::TextEdit::singleline(&mut self.o.exclude_dirs).desired_width(260.0)).on_hover_text(tr("Nombres de carpetas que no se recorren, con comodines, separados por «;»"));
+                        ui.add(egui::TextEdit::singleline(&mut self.o.exclude_dirs).desired_width(260.0)).on_hover_text(tr("Nombres de carpetas que no se recorren, con comodines, separados por comas"));
                     });
                     ui.label(RichText::new(tr("Lo que un filtro deja fuera no se copia ni se borra en ninguna de las dos carpetas.")).small().color(theme::p().muted));
                 });

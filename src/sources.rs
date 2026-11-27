@@ -42,7 +42,7 @@ impl Sources {
             regex: false,
             include: String::new(),
             exclude: String::new(),
-            exclude_dirs: ".git; node_modules; .cache; $RECYCLE.BIN".into(),
+            exclude_dirs: ".git, node_modules, .cache, $RECYCLE.BIN".into(),
         }
     }
 
@@ -111,10 +111,10 @@ impl Sources {
         });
         egui::Grid::new((self.id, "filters")).num_columns(2).spacing([10.0, 4.0]).show(ui, |ui| {
             crate::ui_kit::label(ui, tr("Incluir solo"));
-            ui.add(egui::TextEdit::singleline(&mut self.include).hint_text(if self.regex { "\\.(jpg|png)$" } else { "*.jpg; *.png" }).desired_width(f32::INFINITY)).on_hover_text(tr("Patrones de nombre separados por «;», con * y ?. Vacío = todos. Solo afecta a los archivos de las carpetas."));
+            ui.add(egui::TextEdit::singleline(&mut self.include).hint_text(if self.regex { "\\.(jpg|png)$" } else { "*.jpg, *.png" }).desired_width(f32::INFINITY)).on_hover_text(tr("Patrones de nombre separados por comas, con * y ?. Vacío = todos. Solo afecta a los archivos de las carpetas."));
             ui.end_row();
             crate::ui_kit::label(ui, tr("Excluir"));
-            ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text(if self.regex { "\\.(tmp|log)$" } else { "*.tmp; *.log" }).desired_width(f32::INFINITY));
+            ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text(if self.regex { "\\.(tmp|log)$" } else { "*.tmp, *.log" }).desired_width(f32::INFINITY));
             ui.end_row();
             crate::ui_kit::label(ui, tr("Saltar carpetas"));
             ui.add(egui::TextEdit::singleline(&mut self.exclude_dirs).desired_width(f32::INFINITY));

@@ -177,8 +177,8 @@ impl EmptyDirs {
             roots: RootList::new(folders, "emptydirs_roots"),
             recursive: true,
             include_root: false,
-            junk: "Thumbs.db; desktop.ini; .DS_Store; ._*".into(),
-            protect: ".git; .svn; node_modules".into(),
+            junk: "Thumbs.db, desktop.ini, .DS_Store, ._*".into(),
+            protect: ".git, .svn, node_modules".into(),
             hidden_is_junk: false,
             regex: false,
             permanent: false,
@@ -288,7 +288,7 @@ impl EmptyDirs {
             });
             egui::Grid::new("emptydirs_grid").num_columns(2).spacing([10.0, 4.0]).show(ui, |ui| {
                 crate::ui_kit::label(ui, tr("Cuentan como vacío"));
-                ui.add(egui::TextEdit::singleline(&mut self.junk).desired_width(f32::INFINITY)).on_hover_text(tr("Una carpeta que solo tiene archivos así se considera vacía y se elimina con ellos. Patrones separados por «;»."));
+                ui.add(egui::TextEdit::singleline(&mut self.junk).desired_width(f32::INFINITY)).on_hover_text(tr("Una carpeta que solo tiene archivos así se considera vacía y se elimina con ellos. Patrones separados por comas."));
                 ui.end_row();
                 crate::ui_kit::label(ui, tr("Carpetas protegidas"));
                 ui.add(egui::TextEdit::singleline(&mut self.protect).desired_width(f32::INFINITY)).on_hover_text(tr("Estas carpetas nunca se tocan, y las que las contienen tampoco quedan vacías."));
@@ -381,7 +381,7 @@ mod tests {
     use super::*;
 
     fn cfg() -> Cfg {
-        Cfg { recursive: true, include_root: false, junk: crate::rename::name_matcher("Thumbs.db; .DS_Store", false).unwrap(), protect: crate::rename::name_matcher(".git", false).unwrap(), hidden_is_junk: false }
+        Cfg { recursive: true, include_root: false, junk: crate::rename::name_matcher("Thumbs.db, .DS_Store", false).unwrap(), protect: crate::rename::name_matcher(".git", false).unwrap(), hidden_is_junk: false }
     }
 
     fn tree() -> PathBuf {

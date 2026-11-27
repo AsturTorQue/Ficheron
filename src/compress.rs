@@ -180,7 +180,7 @@ impl Default for Opts {
             dest: String::new(),
             conflict: 0,
             include: String::new(),
-            exclude: ".DS_Store; Thumbs.db; desktop.ini".into(),
+            exclude: ".DS_Store, Thumbs.db, desktop.ini".into(),
             pat_regex: false,
             hidden: true,
             follow_links: false,
@@ -1152,14 +1152,14 @@ impl Compressor {
             ui.label(RichText::new(tr("Con partes (.001, .002…) puedes enviar paquetes grandes por correo; se vuelven a unir con la herramienta «Unir archivos».")).small().color(theme::p().muted));
         });
         egui::CollapsingHeader::new(tr("🔎 Qué incluir")).default_open(false).show(ui, |ui| {
-            let hint_inc = if self.o.pat_regex { "\\.(jpe?g|png)$" } else { "*.jpg; *.png" };
+            let hint_inc = if self.o.pat_regex { "\\.(jpe?g|png)$" } else { "*.jpg, *.png" };
             ui.horizontal(|ui| {
                 crate::ui_kit::label(ui, tr("Solo"));
                 ui.add(egui::TextEdit::singleline(&mut self.o.include).hint_text(hint_inc).desired_width(300.0)).on_hover_text(tr("Dentro de las carpetas, incluye solo los archivos que coincidan (vacío = todos)"));
             });
             ui.horizontal(|ui| {
                 crate::ui_kit::label(ui, tr("Excluir"));
-                ui.add(egui::TextEdit::singleline(&mut self.o.exclude).hint_text(if self.o.pat_regex { "^\\.git$" } else { "*.tmp; node_modules; .git" }).desired_width(300.0)).on_hover_text(tr("Archivos y carpetas (con todo lo que contienen) que no se incluyen"));
+                ui.add(egui::TextEdit::singleline(&mut self.o.exclude).hint_text(if self.o.pat_regex { "^\\.git$" } else { "*.tmp, node_modules, .git" }).desired_width(300.0)).on_hover_text(tr("Archivos y carpetas (con todo lo que contienen) que no se incluyen"));
             });
             ui.checkbox(&mut self.o.pat_regex, tr("Los filtros son expresiones regulares"));
             ui.checkbox(&mut self.o.hidden, tr("Incluir archivos y carpetas ocultos"));

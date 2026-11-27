@@ -416,7 +416,7 @@ impl Organizer {
             mode: 0,
             date_src: 0,
             date_tpl: "{año}/{mes}".into(),
-            rules: vec![("*.pdf; *.docx".into(), "Documentos".into()), ("*factura*".into(), "Facturas".into())],
+            rules: vec![("*.pdf, *.docx".into(), "Documentos".into()), ("*factura*".into(), "Facturas".into())],
             other: String::new(),
             recursive: false,
             hidden: false,
@@ -635,7 +635,7 @@ impl Organizer {
                         if ui.small_button("✖").clicked() {
                             remove = Some(k);
                         }
-                        ui.add(egui::TextEdit::singleline(pat).hint_text("*.pdf; *factura*").desired_width(240.0).font(egui::TextStyle::Monospace));
+                        ui.add(egui::TextEdit::singleline(pat).hint_text("*.pdf, *factura*").desired_width(240.0).font(egui::TextStyle::Monospace));
                         ui.label("»");
                         ui.add(egui::TextEdit::singleline(folder).hint_text(tr("carpeta")).desired_width(200.0));
                     });
@@ -680,11 +680,11 @@ impl Organizer {
             ui.checkbox(&mut self.filter_regex, tr("Expresión regular")).on_hover_text(tr("Los patrones de «Solo», «Excluir» y de las reglas propias se leen como expresiones regulares sobre el nombre (sin distinguir mayúsculas)."));
             ui.horizontal(|ui| {
                 crate::ui_kit::label(ui, tr("Solo"));
-                ui.add(egui::TextEdit::singleline(&mut self.include).hint_text(if self.filter_regex { "\\.(jpg|png)$" } else { "*.jpg; *.png" }).desired_width(260.0));
+                ui.add(egui::TextEdit::singleline(&mut self.include).hint_text(if self.filter_regex { "\\.(jpg|png)$" } else { "*.jpg, *.png" }).desired_width(260.0));
             });
             ui.horizontal(|ui| {
                 crate::ui_kit::label(ui, tr("Excluir"));
-                ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text(if self.filter_regex { "\\.tmp$|^importante" } else { "*.tmp; importante*" }).desired_width(260.0));
+                ui.add(egui::TextEdit::singleline(&mut self.exclude).hint_text(if self.filter_regex { "\\.tmp$|^importante" } else { "*.tmp, importante*" }).desired_width(260.0));
             });
             ui.checkbox(&mut self.clean_empty, tr("Quitar las subcarpetas que queden vacías")).on_hover_text(tr("Solo al mover archivos."));
         });

@@ -216,7 +216,7 @@ pub struct Replacer {
 impl Replacer {
     pub fn new(targets: Vec<PathBuf>) -> Replacer {
         let mut src = Sources::new("replace_src", targets);
-        src.include = "*.txt; *.md; *.csv; *.json; *.xml; *.html; *.css; *.js; *.ts; *.py; *.rs; *.c; *.h; *.cpp; *.java; *.yml; *.yaml; *.toml; *.ini; *.log; *.sh; *.sql".into();
+        src.include = "*.txt, *.md, *.csv, *.json, *.xml, *.html, *.css, *.js, *.ts, *.py, *.rs, *.c, *.h, *.cpp, *.java, *.yml, *.yaml, *.toml, *.ini, *.log, *.sh, *.sql".into();
         Replacer {
             src,
             o: Opts { find: String::new(), replace: String::new(), regex: false, case: false, word: false, backup: false, max_bytes: 20 << 20 },

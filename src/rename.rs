@@ -326,7 +326,7 @@ impl Renamer {
     }
 
     fn add_folder(&mut self, dir: &Path) -> usize {
-        let matcher = match name_matcher(&self.add_mask.replace(',', ";"), self.add_regex) {
+        let matcher = match name_matcher(&self.add_mask, self.add_regex) {
             Ok(m) => m,
             Err(e) => {
                 self.status = Some((trf!("Expresión no válida: {}", e), true));
@@ -892,7 +892,7 @@ impl Renamer {
         });
         // 2. One filter for both jobs: it decides what a folder brings into the list, and the
         // buttons beside it mark which of the files already listed get renamed.
-        let m = name_matcher(&self.add_mask.replace(',', ";"), self.add_regex);
+        let m = name_matcher(&self.add_mask, self.add_regex);
         let ok = matches!(m, Ok(Some(_)));
         ui.horizontal_wrapped(|ui| {
             row_label(ui, tr("FILTRO"));
@@ -1997,7 +1997,7 @@ fn wildcard_replacement(w: &str) -> String {
     out
 }
 
-/// Names matching wildcards (several separated by «;») or a regular expression; case doesn't matter.
+/// Names matching wildcards (several separated by commas; «;» works too) or a regular expression; case doesn't matter.
 pub fn name_matcher(text: &str, regex_mode: bool) -> Result<Option<Regex>, String> {
     let text = text.trim();
     if text.is_empty() {
@@ -2006,7 +2006,7 @@ pub fn name_matcher(text: &str, regex_mode: bool) -> Result<Option<Regex>, Strin
     let pat = if regex_mode {
         text.to_string()
     } else {
-        text.split(';').map(str::trim).filter(|p| !p.is_empty()).map(wildcard_to_regex).collect::<Vec<_>>().join("|")
+        text.split([';', ',']).map(str::trim).filter(|p| !p.is_empty()).map(wildcard_to_regex).collect::<Vec<_>>().join("|")
     };
     RegexBuilder::new(&pat).case_insensitive(true).build().map(Some).map_err(|e| e.to_string().lines().last().unwrap_or("").trim().to_string())
 }
@@ -2453,7 +2453,7 @@ mod tests {
         let wre = RegexBuilder::new(&wildcard_to_regex("IMG_*")).case_insensitive(true).build().unwrap();
         assert_eq!(apply_rule(&wc, Some(&wre), "IMG_0042 playa", &c, ""), "Foto 0042 playa");
         assert_eq!(apply_rule(&wc, Some(&wre), "DSC_1", &c, ""), "DSC_1");
-        let m = name_matcher("*.jpg; foto*", false).unwrap().unwrap();
+        let m = name_matcher("*.jpg, foto*", false).unwrap().unwrap();
         assert!(m.is_match("a.JPG") && m.is_match("Foto 1.png") && !m.is_match("b.png"));
         assert!(name_matcher("(", true).is_err());
         assert_eq!(fmt_counter(28, 2, 1), "ab");
