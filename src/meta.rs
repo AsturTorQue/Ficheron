@@ -3,13 +3,12 @@
 //! remove them (everything, or only the GPS location) before sharing. Every changed file can
 //! keep a .bak copy.
 
-use crate::checksum::cell;
 use crate::fsops;
 use crate::i18n::tr;
 use crate::sources::Sources;
 use crate::theme;
 use crate::tools::ToolEvent;
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, Color32, FontId, RichText};
 use little_exif::exif_tag::ExifTag;
 use little_exif::ifd::ExifTagGroup;
 use little_exif::metadata::Metadata as ExifMeta;
@@ -395,6 +394,10 @@ pub struct MetaTool {
     progress: Arc<AtomicUsize>,
     cancel: Arc<AtomicBool>,
     status: Option<(String, bool)>,
+    /// Open or fold the file choice on the next frame.
+    fold_form: Option<bool>,
+    scroll_to: bool,
+    detail_filter: String,
 }
 
 impl MetaTool {
@@ -404,7 +407,7 @@ impl MetaTool {
         src.exclude_dirs.clear();
         MetaTool {
             src,
-            tab: 0,
+            tab: 2,
             rows: vec![],
             filter: String::new(),
             view_cache: Default::default(),
@@ -414,11 +417,14 @@ impl MetaTool {
             audio_fields: vec![(false, String::new()); AUDIO_FIELDS.len()],
             gps_only: false,
             keep_orientation: true,
-            backup: true,
+            backup: false,
             rx: None,
             progress: Arc::new(AtomicUsize::new(0)),
             cancel: Arc::new(AtomicBool::new(false)),
             status: None,
+            fold_form: None,
+            scroll_to: false,
+            detail_filter: String::new(),
         }
     }
 
@@ -536,6 +542,10 @@ impl MetaTool {
             Msg::Rows(rows) => {
                 self.status = Some((trf!("{} archivo(s) con metadatos posibles", rows.len()), false));
                 self.rows = rows;
+                if !self.rows.is_empty() {
+                    self.fold_form = Some(false);
+                    self.select(0);
+                }
             }
             Msg::Done(res) => {
                 let (ok, bad) = (res.iter().filter(|r| r.1.is_ok()).count(), res.iter().filter(|r| r.1.is_err()).count());
@@ -561,7 +571,10 @@ impl MetaTool {
     pub fn ui(&mut self, ui: &mut egui::Ui, events: &mut Vec<ToolEvent>, selection: &[PathBuf], cwd: &Path) {
         self.poll(events);
         let busy = self.rx.is_some();
-        ui.add_enabled_ui(!busy, |ui| self.src.ui(ui, selection, cwd, tr("FOTOS Y MÚSICA")));
+        // The choice of files folds away once they are read, leaving the room to the panels.
+        egui::CollapsingHeader::new(RichText::new(tr("QUÉ ARCHIVOS LEER")).small().strong().color(theme::p().sub)).id_salt("meta_form").open(self.fold_form.take()).default_open(true).show(ui, |ui| {
+            ui.add_enabled_ui(!busy, |ui| self.src.ui(ui, selection, cwd, tr("FOTOS Y MÚSICA")));
+        });
         ui.horizontal(|ui| {
             let btn = egui::Button::new(RichText::new(tr("🔍 Leer metadatos")).color(Color32::WHITE).strong()).fill(theme::accent());
             if ui.add_enabled(!busy, btn).clicked() {
@@ -582,38 +595,54 @@ impl MetaTool {
             return;
         }
         ui.separator();
-        self.table_ui(ui);
-        if let Some(k) = self.selected {
-            if !self.details.is_empty() {
-                let name = self.rows.get(k).map(|r| r.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()).unwrap_or_default();
-                egui::CollapsingHeader::new(RichText::new(trf!("🗒 Todos los metadatos de «{}» ({})", name, self.details.len()))).default_open(true).show(ui, |ui| {
-                    egui::ScrollArea::vertical().id_salt("meta_details").max_height(crate::tools::grow(ui, 170.0)).auto_shrink([false, true]).show_rows(ui, 20.0, self.details.len(), |ui, range| {
-                        ui.spacing_mut().item_spacing.y = 0.0;
-                        for i in range {
-                            let (k, v) = &self.details[i];
-                            ui.horizontal(|ui| {
-                                cell(ui, 220.0, 20.0, |ui| ui.label(RichText::new(k).small().color(theme::p().sub)));
-                                ui.add(egui::Label::new(RichText::new(v).small().monospace()).truncate());
-                            });
-                        }
-                    });
-                });
-            } else {
-                ui.label(RichText::new(tr("Este archivo no tiene metadatos.")).small().color(theme::p().muted));
+        let view = self.toolbar_ui(ui);
+        // Arrow keys move through the list when nothing is being typed.
+        let typing = ui.ctx().memory(|m| m.focused().is_some());
+        if !typing && !view.is_empty() {
+            let step = ui.input_mut(|i| {
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
+                    1
+                } else if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
+                    -1
+                } else {
+                    0
+                }
+            });
+            if step != 0 {
+                let at = self.selected.and_then(|s| view.iter().position(|&v| v == s));
+                let next = match at {
+                    Some(p) => (p as i64 + step).clamp(0, view.len() as i64 - 1) as usize,
+                    None => 0,
+                };
+                self.select(view[next]);
+                self.scroll_to = true;
             }
         }
-        ui.separator();
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.tab, 0, tr("✏ Editar"));
-            ui.selectable_value(&mut self.tab, 1, tr("🧹 Quitar metadatos"));
+        let height = ui.available_height().max(360.0);
+        let (area, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::hover());
+        let mut panes = ui.new_child(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::top_down(egui::Align::Min)));
+        egui::SidePanel::left(egui::Id::new("meta_files")).resizable(true).default_width(340.0).width_range(200.0..=area.width() * 0.6).show_inside(&mut panes, |ui| self.list_ui(ui, &view));
+        egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(egui::Margin { left: 10, ..Default::default() })).show_inside(&mut panes, |ui| {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.tab, 2, tr("ℹ Metadatos"));
+                ui.selectable_value(&mut self.tab, 0, tr("✏ Editar"));
+                ui.selectable_value(&mut self.tab, 1, tr("✖ Quitar metadatos"));
+            });
+            ui.separator();
+            match self.tab {
+                2 => self.details_ui(ui),
+                t => {
+                    egui::ScrollArea::vertical().id_salt("meta_actions").auto_shrink([false, false]).show(ui, |ui| {
+                        ui.add_enabled_ui(!busy, |ui| if t == 0 { self.edit_ui(ui) } else { self.clean_ui(ui) });
+                    });
+                }
+            }
         });
-        ui.add_enabled_ui(!busy, |ui| match self.tab {
-            0 => self.edit_ui(ui),
-            _ => self.clean_ui(ui),
-        });
+        self.scroll_to = false;
     }
 
-    fn table_ui(&mut self, ui: &mut egui::Ui) {
+    /// Counts, filter and ticking buttons; returns the rows shown (indexes).
+    fn toolbar_ui(&mut self, ui: &mut egui::Ui) -> Vec<usize> {
         let with_gps = self.rows.iter().filter(|r| r.sum.gps).count();
         let marked = self.rows.iter().filter(|r| r.on).count();
         ui.horizontal_wrapped(|ui| {
@@ -634,70 +663,145 @@ impl MetaTool {
         });
         let q = self.filter.to_lowercase();
         let salt = self.rows.len() as u64;
-        let view = self.view_cache.get(&self.filter, salt, || self.rows.iter().enumerate().filter(|(_, r)| q.is_empty() || r.path.to_string_lossy().to_lowercase().contains(&q) || r.sum.what.to_lowercase().contains(&q)).map(|(i, _)| i).collect());
+        self.view_cache.get(&self.filter, salt, || self.rows.iter().enumerate().filter(|(_, r)| q.is_empty() || r.path.to_string_lossy().to_lowercase().contains(&q) || r.sum.what.to_lowercase().contains(&q)).map(|(i, _)| i).collect())
+    }
+
+    /// Left panel: every file, ticked to be changed, with a line about what it holds.
+    fn list_ui(&mut self, ui: &mut egui::Ui, view: &[usize]) {
+        ui.label(RichText::new(trf!("ARCHIVOS ({})", view.len())).small().strong().color(theme::p().sub));
+        let row_h = 42.0;
+        let mut sa = egui::ScrollArea::both().id_salt("meta_rows").auto_shrink([false, false]);
+        if self.scroll_to {
+            if let Some(p) = self.selected.and_then(|s| view.iter().position(|&v| v == s)) {
+                sa = sa.vertical_scroll_offset((p as f32 * row_h - ui.available_height() / 2.0).max(0.0));
+            }
+        }
         let mut click = None;
-        egui::ScrollArea::vertical().id_salt("meta_rows").max_height(crate::tools::grow(ui, 200.0)).auto_shrink([false, false]).show_rows(ui, 22.0, view.len(), |ui, range| {
+        sa.show_rows(ui, row_h, view.len(), |ui, range| {
             ui.spacing_mut().item_spacing.y = 0.0;
             for &i in &view[range] {
                 let selected = self.selected == Some(i);
+                let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width().max(280.0), row_h), egui::Sense::click());
+                if selected {
+                    ui.painter().rect_filled(rect, 4.0, theme::accent().gamma_multiply(0.22));
+                } else if resp.hovered() {
+                    ui.painter().rect_filled(rect, 4.0, theme::p().hover);
+                }
                 let r = &mut self.rows[i];
-                ui.horizontal(|ui| {
-                    ui.set_height(22.0);
-                    if selected {
-                        ui.painter().rect_filled(ui.max_rect(), 4.0, theme::accent().gamma_multiply(0.15));
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(rect.min + egui::vec2(4.0, 0.0), egui::vec2(24.0, rect.height()))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+                child.checkbox(&mut r.on, "").on_hover_text(tr("Incluir en «Editar» y «Quitar metadatos»"));
+                let x = rect.left() + 30.0;
+                let name = r.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let p = ui.painter();
+                p.text(egui::pos2(x, rect.top() + 4.0), egui::Align2::LEFT_TOP, format!("{} {name}", if is_image(r.kind) { "🖼" } else { "🎵" }), FontId::proportional(14.0), if r.on { theme::p().text } else { theme::p().muted });
+                let what = if r.sum.has_meta { [r.sum.what.as_str(), r.sum.taken.as_str()].iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join(" · ") } else { tr("sin metadatos").to_string() };
+                p.text(egui::pos2(x, rect.bottom() - 4.0), egui::Align2::LEFT_BOTTOM, what, FontId::proportional(11.0), theme::p().muted);
+                let mut right = rect.right() - 8.0;
+                match &r.result {
+                    Some(Ok(())) => {
+                        p.text(egui::pos2(right, rect.top() + 4.0), egui::Align2::RIGHT_TOP, tr("✔ hecho"), FontId::proportional(12.0), theme::p().ok);
                     }
-                    ui.checkbox(&mut r.on, "");
-                    let name = r.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                    let l = cell(ui, 230.0, 22.0, |ui| ui.add(egui::Label::new(RichText::new(name)).truncate().sense(egui::Sense::click()))).on_hover_text(r.path.to_string_lossy());
-                    if l.clicked() {
-                        click = Some(i);
+                    Some(Err(_)) => {
+                        p.text(egui::pos2(right, rect.top() + 4.0), egui::Align2::RIGHT_TOP, tr("✖ error"), FontId::proportional(12.0), theme::p().danger);
                     }
-                    cell(ui, 18.0, 22.0, |ui| ui.label(if is_image(r.kind) { "🖼" } else { "🎵" }));
-                    cell(ui, 260.0, 22.0, |ui| ui.add(egui::Label::new(RichText::new(if r.sum.has_meta { r.sum.what.clone() } else { tr("sin metadatos").to_string() }).small().color(if r.sum.has_meta { theme::p().text } else { theme::p().muted })).truncate()));
-                    cell(ui, 140.0, 22.0, |ui| ui.label(RichText::new(&r.sum.taken).small().color(theme::p().sub)));
-                    if r.sum.gps {
-                        ui.label(RichText::new("📍").color(theme::p().danger)).on_hover_text(tr("Contiene la ubicación GPS donde se hizo"));
+                    None => {}
+                }
+                if r.sum.gps {
+                    right -= if r.result.is_some() { 60.0 } else { 0.0 };
+                    p.text(egui::pos2(right, rect.top() + 4.0), egui::Align2::RIGHT_TOP, "📍", FontId::proportional(13.0), theme::p().danger);
+                }
+                let hover = match &r.result {
+                    Some(Err(e)) => format!("{}\n✖ {e}", r.path.display()),
+                    _ if r.sum.gps => format!("{}\n{}", r.path.display(), tr("Contiene la ubicación GPS donde se hizo")),
+                    _ => r.path.to_string_lossy().to_string(),
+                };
+                if resp.on_hover_text(hover).clicked() {
+                    click = Some(i);
+                }
+            }
+        });
+        if let Some(i) = click {
+            self.select(i);
+        }
+    }
+
+    /// Right panel, first tab: every field of the chosen file, whole, scrolling both ways.
+    fn details_ui(&mut self, ui: &mut egui::Ui) {
+        let Some(k) = self.selected else {
+            ui.label(RichText::new(tr("Elige un archivo de la lista para ver todos sus metadatos.")).color(theme::p().muted));
+            return;
+        };
+        let Some(row) = self.rows.get(k) else { return };
+        ui.add(egui::Label::new(RichText::new(row.path.to_string_lossy()).strong()).truncate());
+        if self.details.is_empty() {
+            ui.label(RichText::new(tr("Este archivo no tiene metadatos.")).color(theme::p().muted));
+            return;
+        }
+        ui.add(egui::TextEdit::singleline(&mut self.detail_filter).hint_text(tr("🔍 Buscar un campo")).desired_width(220.0));
+        let q = self.detail_filter.to_lowercase();
+        let rows: Vec<&(String, String)> = self.details.iter().filter(|(k, v)| q.is_empty() || k.to_lowercase().contains(&q) || v.to_lowercase().contains(&q)).collect();
+        let key_w = 230.0;
+        let mut copy = None;
+        egui::ScrollArea::both().id_salt(("meta_details", k)).auto_shrink([false, false]).show_rows(ui, 22.0, rows.len(), |ui, range| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (n, (key, val)) in rows[range.clone()].iter().enumerate() {
+                // The row is as wide as its value, so a long one scrolls sideways instead of being cut.
+                let galley = ui.fonts(|f| f.layout_no_wrap(val.clone(), FontId::monospace(13.0), theme::p().text));
+                let w = ui.available_width().max(key_w + galley.size().x + 20.0);
+                let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 22.0), egui::Sense::click());
+                if (range.start + n) % 2 == 1 {
+                    ui.painter().rect_filled(rect, 0.0, theme::p().stripe);
+                }
+                if resp.hovered() {
+                    ui.painter().rect_filled(rect, 0.0, theme::p().hover);
+                }
+                let p = ui.painter();
+                p.text(rect.left_center() + egui::vec2(6.0, 0.0), egui::Align2::LEFT_CENTER, key.as_str(), FontId::proportional(13.0), theme::p().sub);
+                p.galley(egui::pos2(rect.left() + key_w, rect.center().y - galley.size().y / 2.0), galley, theme::p().text);
+                resp.context_menu(|ui| {
+                    if ui.button(tr("Copiar valor")).clicked() {
+                        copy = Some(val.clone());
+                        ui.close_menu();
                     }
-                    match &r.result {
-                        Some(Ok(())) => {
-                            ui.label(RichText::new(tr("✔ hecho")).small().color(theme::p().ok));
-                        }
-                        Some(Err(e)) => {
-                            ui.add(egui::Label::new(RichText::new(format!("✖ {e}")).small().color(theme::p().danger)).truncate());
-                        }
-                        None => {}
+                    if ui.button(tr("Copiar campo y valor")).clicked() {
+                        copy = Some(format!("{key}: {val}"));
+                        ui.close_menu();
                     }
                 });
             }
         });
-        if let Some(i) = click {
-            self.selected = Some(i);
-            self.details = read_all(&self.rows[i].path);
-            // Start the edit fields from this file's values.
-            if let Some(ex) = read_exif(&self.rows[i].path) {
-                let get = |t: exif::Tag| ex.get_field(t, exif::In::PRIMARY).map(|f| f.display_value().to_string().trim_matches('"').trim().to_string()).unwrap_or_default();
-                let vals = [get(exif::Tag::ImageDescription), get(exif::Tag::Artist), get(exif::Tag::Copyright), get(exif::Tag::Software), get(exif::Tag::Make), get(exif::Tag::Model), String::new()];
-                for (f, v) in self.image_fields.iter_mut().zip(vals) {
-                    if !f.0 {
-                        f.1 = v;
-                    }
-                }
-                // "2024-05-31 18:30:00": only the date part uses dashes.
-                if !self.image_fields[6].0 {
-                    let d = get(exif::Tag::DateTimeOriginal);
-                    if d.len() == 19 {
-                        self.image_fields[6].1 = format!("{} {}", d[..10].replace(':', "-"), &d[11..]);
-                    }
+        if let Some(t) = copy {
+            ui.ctx().copy_text(t);
+        }
+    }
+
+    /// Shows a file's metadata and starts the edit fields from its values.
+    fn select(&mut self, i: usize) {
+        self.selected = Some(i);
+        self.details = read_all(&self.rows[i].path);
+        if let Some(ex) = read_exif(&self.rows[i].path) {
+            let get = |t: exif::Tag| ex.get_field(t, exif::In::PRIMARY).map(|f| f.display_value().to_string().trim_matches('"').trim().to_string()).unwrap_or_default();
+            let vals = [get(exif::Tag::ImageDescription), get(exif::Tag::Artist), get(exif::Tag::Copyright), get(exif::Tag::Software), get(exif::Tag::Make), get(exif::Tag::Model), String::new()];
+            for (f, v) in self.image_fields.iter_mut().zip(vals) {
+                if !f.0 {
+                    f.1 = v;
                 }
             }
-            if self.rows[i].kind == Kind::Audio {
-                if let Ok(tf) = lofty::read_from_path(&self.rows[i].path) {
-                    if let Some(t) = tf.primary_tag().or_else(|| tf.first_tag()) {
-                        let vals = [t.title().map(|s| s.to_string()), t.artist().map(|s| s.to_string()), t.album().map(|s| s.to_string()), t.year().map(|y| y.to_string()), t.track().map(|y| y.to_string()), t.genre().map(|s| s.to_string()), t.comment().map(|s| s.to_string())];
-                        for (f, v) in self.audio_fields.iter_mut().zip(vals) {
-                            if !f.0 {
-                                f.1 = v.unwrap_or_default();
-                            }
+            // "2024-05-31 18:30:00": only the date part uses dashes.
+            if !self.image_fields[6].0 {
+                let d = get(exif::Tag::DateTimeOriginal);
+                if d.len() == 19 {
+                    self.image_fields[6].1 = format!("{} {}", d[..10].replace(':', "-"), &d[11..]);
+                }
+            }
+        }
+        if self.rows[i].kind == Kind::Audio {
+            if let Ok(tf) = lofty::read_from_path(&self.rows[i].path) {
+                if let Some(t) = tf.primary_tag().or_else(|| tf.first_tag()) {
+                    let vals = [t.title().map(|s| s.to_string()), t.artist().map(|s| s.to_string()), t.album().map(|s| s.to_string()), t.year().map(|y| y.to_string()), t.track().map(|y| y.to_string()), t.genre().map(|s| s.to_string()), t.comment().map(|s| s.to_string())];
+                    for (f, v) in self.audio_fields.iter_mut().zip(vals) {
+                        if !f.0 {
+                            f.1 = v.unwrap_or_default();
                         }
                     }
                 }
@@ -745,7 +849,7 @@ impl MetaTool {
         ui.horizontal(|ui| {
             ui.checkbox(&mut self.backup, tr("Guardar una copia .bak de cada archivo"));
             let n = self.rows.iter().filter(|r| r.on).count();
-            let btn = egui::Button::new(RichText::new(trf!("🧹 Limpiar {} archivo(s)", n)).color(Color32::WHITE).strong()).fill(theme::p().danger);
+            let btn = egui::Button::new(RichText::new(trf!("✖ Limpiar {} archivo(s)", n)).color(Color32::WHITE).strong()).fill(theme::p().danger);
             if ui.add_enabled(n > 0, btn).clicked() {
                 self.run_clean();
             }
