@@ -153,16 +153,176 @@ fn exif_date(s: &str) -> Result<String, String> {
 }
 
 fn edit_image(path: &Path, e: &Edits) -> Result<(), String> {
-    let mut m = ExifMeta::new_from_path(path).unwrap_or_else(|_| ExifMeta::new());
+    let mut m = match ExifMeta::new_from_path(path) {
+        Ok(m) => m,
+        // Starting from nothing would wipe the camera's data: only when there is none.
+        Err(_) if read_exif(path).is_some() => return Err(tr("no se pueden leer bien sus datos EXIF y cambiarlos borraría los demás; no se ha tocado").to_string()),
+        Err(_) => ExifMeta::new(),
+    };
+    apply_edits(&mut m, e)?;
+    let original = fs::read(path).map_err(|e| e.to_string())?;
+    // PNG and WebP are written here (the standard eXIf / EXIF chunks every viewer reads);
+    // JPEG and TIFF by little_exif. Either way the result is checked before it replaces the
+    // file: it must still be a picture, of the same size, and its EXIF must read back.
+    let bytes = match kind_of(path) {
+        Kind::Png => png_with_exif(&original, &tiff_blob(&m)?)?,
+        _ if ext_is(path, "webp") => webp_with_exif(&original, &tiff_blob(&m)?)?,
+        _ => {
+            let mut buf = original.clone();
+            m.write_to_vec(&mut buf, little_exif::filetype::FileExtension::JPEG).or_else(|_| {
+                // Not JPEG: let little_exif write a copy beside it and read that back.
+                let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                // Same extension: little_exif goes by it.
+                let tmp = path.with_file_name(format!(".exif-{name}"));
+                fs::copy(path, &tmp).map_err(|e| e.to_string())?;
+                let r = m.write_to_file(&tmp).map_err(|e| e.to_string()).and_then(|_| fs::read(&tmp).map_err(|e| e.to_string()));
+                let _ = fs::remove_file(&tmp);
+                r.map(|b| buf = b)
+            })?;
+            buf
+        }
+    };
+    check_picture(&original, &bytes)?;
+    write_atomic(path, &bytes)
+}
+
+fn ext_is(path: &Path, ext: &str) -> bool {
+    path.extension().map(|e| e.to_string_lossy().eq_ignore_ascii_case(ext)).unwrap_or(false)
+}
+
+/// The EXIF data alone (the TIFF structure that starts with «II» or «MM»).
+fn tiff_blob(m: &ExifMeta) -> Result<Vec<u8>, String> {
+    // little_exif gives it wrapped as a JPEG APP1 segment: marker, length, "Exif\0\0".
+    let app1 = m.as_u8_vec(little_exif::filetype::FileExtension::JPEG).map_err(|e| e.to_string())?;
+    if app1.len() < 10 || &app1[4..10] != b"Exif\0\0" {
+        return Err(tr("no se pudieron preparar los datos EXIF").to_string());
+    }
+    Ok(app1[10..].to_vec())
+}
+
+/// A new file is accepted only if it is still the same picture with readable EXIF.
+fn check_picture(before: &[u8], after: &[u8]) -> Result<(), String> {
+    let bad = || tr("no se ha guardado: el resultado no sería una imagen válida").to_string();
+    let a = imagesize::blob_size(before).map_err(|_| bad());
+    let b = imagesize::blob_size(after).map_err(|_| bad())?;
+    if let Ok(a) = a {
+        if (a.width, a.height) != (b.width, b.height) {
+            return Err(bad());
+        }
+    }
+    if let Ok(fmt) = image::guess_format(after) {
+        if matches!(fmt, image::ImageFormat::Png | image::ImageFormat::WebP | image::ImageFormat::Jpeg | image::ImageFormat::Tiff) && image::load_from_memory_with_format(after, fmt).is_err() {
+            return Err(bad());
+        }
+    }
+    Ok(())
+}
+
+/// PNG with its EXIF in one standard eXIf chunk, before the picture data. Older EXIF copies
+/// (another eXIf, or the «Raw profile type exif» text some programs use) are dropped.
+fn png_with_exif(b: &[u8], tiff: &[u8]) -> Result<Vec<u8>, String> {
+    const SIG: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    if b.len() < 8 || b[..8] != SIG {
+        return Err(tr("no es un PNG válido").to_string());
+    }
+    let mut out = b[..8].to_vec();
+    let mut i = 8;
+    let mut placed = false;
+    while i + 12 <= b.len() {
+        let len = u32::from_be_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]) as usize;
+        let end = i + 12 + len;
+        if end > b.len() {
+            return Err(tr("PNG dañado").to_string());
+        }
+        let name = &b[i + 4..i + 8];
+        let body = &b[i + 8..i + 8 + len];
+        let exif_text = matches!(name, b"zTXt" | b"iTXt" | b"tEXt") && body.starts_with(b"Raw profile type exif");
+        if name == b"IDAT" && !placed {
+            if tiff.len() > 8 {
+                out.extend((tiff.len() as u32).to_be_bytes());
+                out.extend(b"eXIf");
+                out.extend(tiff);
+                out.extend(crc32fast::hash(&[b"eXIf".as_slice(), tiff].concat()).to_be_bytes());
+            }
+            placed = true;
+        }
+        if name != b"eXIf" && !exif_text {
+            out.extend_from_slice(&b[i..end]);
+        }
+        i = end;
+    }
+    Ok(out)
+}
+
+/// WebP with its EXIF in the EXIF chunk. A simple WebP (only VP8 or VP8L) becomes an extended
+/// one: a VP8X header saying there is EXIF, with the picture's size.
+fn webp_with_exif(b: &[u8], tiff: &[u8]) -> Result<Vec<u8>, String> {
+    let bad = || tr("no es un WebP válido").to_string();
+    if b.len() < 12 || &b[..4] != b"RIFF" || &b[8..12] != b"WEBP" {
+        return Err(bad());
+    }
+    let mut chunks: Vec<([u8; 4], Vec<u8>)> = vec![];
+    let mut i = 12;
+    while i + 8 <= b.len() {
+        let id: [u8; 4] = b[i..i + 4].try_into().unwrap();
+        let len = u32::from_le_bytes(b[i + 4..i + 8].try_into().unwrap()) as usize;
+        if i + 8 + len > b.len() {
+            return Err(bad());
+        }
+        chunks.push((id, b[i + 8..i + 8 + len].to_vec()));
+        i += 8 + len + (len & 1);
+    }
+    chunks.retain(|(id, _)| id != b"EXIF");
+    let keep = tiff.len() > 8;
+    if let Some(x) = chunks.iter_mut().find(|(id, _)| id == b"VP8X") {
+        if x.1.is_empty() {
+            return Err(bad());
+        }
+        if keep {
+            x.1[0] |= 0x08;
+        } else {
+            x.1[0] &= !0x08;
+        }
+    } else if keep {
+        let size = imagesize::blob_size(b).map_err(|_| bad())?;
+        let (w, h) = (size.width as u32 - 1, size.height as u32 - 1);
+        let mut x = vec![0x08, 0, 0, 0];
+        x.extend(&w.to_le_bytes()[..3]);
+        x.extend(&h.to_le_bytes()[..3]);
+        // An alpha channel in a VP8L picture is flagged too.
+        if chunks.iter().any(|(id, d)| id == b"VP8L" && d.len() > 4 && d[4] & 0x10 != 0) {
+            x[0] |= 0x10;
+        }
+        chunks.insert(0, (*b"VP8X", x));
+    }
+    if keep {
+        chunks.push((*b"EXIF", tiff.to_vec()));
+    }
+    let mut body = b"WEBP".to_vec();
+    for (id, d) in &chunks {
+        body.extend(id);
+        body.extend((d.len() as u32).to_le_bytes());
+        body.extend(d);
+        if d.len() & 1 == 1 {
+            body.push(0);
+        }
+    }
+    let mut out = b"RIFF".to_vec();
+    out.extend((body.len() as u32).to_le_bytes());
+    out.extend(body);
+    Ok(out)
+}
+
+fn apply_edits(m: &mut ExifMeta, e: &Edits) -> Result<(), String> {
     for (id, v) in &e.set {
         let v = v.trim().to_string();
         match id.as_str() {
-            "desc" => set_or_clear(&mut m, v.clone(), ExifTag::ImageDescription(v.clone()), ExifTag::ImageDescription(String::new())),
-            "artist" => set_or_clear(&mut m, v.clone(), ExifTag::Artist(v.clone()), ExifTag::Artist(String::new())),
-            "copyright" => set_or_clear(&mut m, v.clone(), ExifTag::Copyright(v.clone()), ExifTag::Copyright(String::new())),
-            "software" => set_or_clear(&mut m, v.clone(), ExifTag::Software(v.clone()), ExifTag::Software(String::new())),
-            "make" => set_or_clear(&mut m, v.clone(), ExifTag::Make(v.clone()), ExifTag::Make(String::new())),
-            "model" => set_or_clear(&mut m, v.clone(), ExifTag::Model(v.clone()), ExifTag::Model(String::new())),
+            "desc" => set_or_clear(m, v.clone(), ExifTag::ImageDescription(v.clone()), ExifTag::ImageDescription(String::new())),
+            "artist" => set_or_clear(m, v.clone(), ExifTag::Artist(v.clone()), ExifTag::Artist(String::new())),
+            "copyright" => set_or_clear(m, v.clone(), ExifTag::Copyright(v.clone()), ExifTag::Copyright(String::new())),
+            "software" => set_or_clear(m, v.clone(), ExifTag::Software(v.clone()), ExifTag::Software(String::new())),
+            "make" => set_or_clear(m, v.clone(), ExifTag::Make(v.clone()), ExifTag::Make(String::new())),
+            "model" => set_or_clear(m, v.clone(), ExifTag::Model(v.clone()), ExifTag::Model(String::new())),
             "date" => {
                 if v.is_empty() {
                     m.remove_tag(ExifTag::DateTimeOriginal(String::new()));
@@ -176,7 +336,7 @@ fn edit_image(path: &Path, e: &Edits) -> Result<(), String> {
             _ => {}
         }
     }
-    m.write_to_file(path).map_err(|e| e.to_string())
+    Ok(())
 }
 
 fn set_or_clear(m: &mut ExifMeta, v: String, set: ExifTag, clear: ExifTag) {
@@ -1069,6 +1229,28 @@ mod tests {
         clean_file(&w, CleanOpts { gps_only: false, keep_orientation: true }).unwrap();
         assert!(!summary(&w).has_meta);
         assert!(clean_file(&w, CleanOpts { gps_only: true, keep_orientation: false }).is_err());
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn edits_read_back_in_every_picture_format() {
+        let d = dir("formats");
+        for ext in ["jpg", "png", "webp", "tiff"] {
+            let p = d.join(format!("f.{ext}"));
+            photo(&p);
+            let e = Edits { set: vec![("artist".into(), "Ana".into()), ("desc".into(), "Hola".into()), ("date".into(), "2024-05-31 18:30:00".into())] };
+            edit_image(&p, &e).unwrap();
+            let all = read_all(&p);
+            assert!(all.iter().any(|(k, v)| k == "Artist" && v.contains("Ana")), "{ext}: {all:?}");
+            assert!(summary(&p).taken.contains("2024"), "{ext}");
+            assert_eq!(image::open(&p).map(|i| i.width()).ok(), Some(16), "{ext} is still a picture");
+            // A second change replaces the first instead of piling up.
+            edit_image(&p, &Edits { set: vec![("artist".into(), "Luis".into())] }).unwrap();
+            let all = read_all(&p);
+            assert!(all.iter().any(|(k, v)| k == "Artist" && v.contains("Luis")) && !all.iter().any(|(_, v)| v.contains("Ana")), "{ext}: {all:?}");
+            assert!(all.iter().any(|(k, _)| k == "ImageDescription"), "{ext}: the other fields stay");
+            assert!(image::open(&p).is_ok(), "{ext}");
+        }
         fs::remove_dir_all(&d).unwrap();
     }
 }
