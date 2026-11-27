@@ -203,11 +203,13 @@ pub struct Picker {
     pub entries: Vec<(String, PathBuf, bool)>,
     pub checked: BTreeSet<PathBuf>,
     pub hidden: bool,
+    /// Offer «Añadir esta carpeta» (off where only files make sense).
+    pub folders_ok: bool,
 }
 
 impl Picker {
     pub fn new(path: PathBuf) -> Picker {
-        let mut p = Picker { path: PathBuf::new(), input: String::new(), entries: vec![], checked: BTreeSet::new(), hidden: false };
+        let mut p = Picker { path: PathBuf::new(), input: String::new(), entries: vec![], checked: BTreeSet::new(), hidden: false, folders_ok: true };
         p.go(path);
         p
     }
@@ -238,6 +240,7 @@ pub fn picker_window(ctx: &egui::Context, id: &str, slot: &mut Option<Picker>) -
     let mut open = true;
     let mut nav: Option<PathBuf> = None;
     let mut add = false;
+    let mut this_folder = false;
     let mut close = false;
     egui::Window::new(tr("Elegir archivos y carpetas")).id(egui::Id::new(("picker_window", id))).open(&mut open).default_width(520.0).default_height(480.0).show(ctx, |ui| {
         ui.horizontal(|ui| {
@@ -296,6 +299,11 @@ pub fn picker_window(ctx: &egui::Context, id: &str, slot: &mut Option<Picker>) -
             if ui.add_enabled(!pk.checked.is_empty(), egui::Button::new(trf!("➕ Añadir {} marcado(s)", pk.checked.len()))).clicked() {
                 add = true;
             }
+            // The folder being looked at, whole, without going up to tick it.
+            let name = pk.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| pk.path.to_string_lossy().to_string());
+            if pk.folders_ok && ui.add_enabled(!pk.path.as_os_str().is_empty(), egui::Button::new(trf!("📂 Añadir esta carpeta («{}»)", name))).on_hover_text(pk.path.to_string_lossy()).clicked() {
+                this_folder = true;
+            }
             if ui.button(tr("Cerrar")).clicked() {
                 close = true;
             }
@@ -308,6 +316,9 @@ pub fn picker_window(ctx: &egui::Context, id: &str, slot: &mut Option<Picker>) -
     if add {
         out = pk.checked.iter().cloned().collect();
         pk.checked.clear();
+    }
+    if this_folder {
+        out.push(pk.path.clone());
     }
     if open && !close {
         *slot = Some(pk);

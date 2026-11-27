@@ -1704,6 +1704,7 @@ static TABLE: &[[&str; 4]] = &[
     ["Desmarca los que coinciden con el filtro; el resto se queda como está", "Untick the ones matching the filter; the rest stay as they are", "Desmarca os que correspondem ao filtro; o resto fica como está", "Décoche ceux qui correspondent au filtre ; le reste ne change pas"],
     ["Desmarca todos: no se renombra nada hasta que marques alguno", "Untick all: nothing is renamed until you tick some", "Desmarca todos: nada é renomeado até marcares algum", "Tout décocher : rien n'est renommé tant que vous n'en cochez pas"],
     ["Ninguno", "None", "Nenhum", "Aucun"],
+    ["📂 Añadir esta carpeta («{}»)", "📂 Add this folder («{}»)", "📂 Adicionar esta pasta («{}»)", "📂 Ajouter ce dossier («{}»)"],
     ["Guardar copia .bak", "Keep a .bak copy", "Guardar cópia .bak", "Garder une copie .bak"],
     ["Deja junto a cada archivo cambiado una copia del original (nombre.bak). Desmarcado no se crea ningún archivo extra.", "Leaves a copy of the original (name.bak) next to each changed file. Unticked, no extra file is created.", "Deixa junto a cada ficheiro alterado uma cópia do original (nome.bak). Desmarcado não se cria nenhum ficheiro extra.", "Laisse une copie de l'original (nom.bak) à côté de chaque fichier modifié. Décoché, aucun fichier supplémentaire n'est créé."],
     ["🔍 Buscar archivos", "🔍 Find files", "🔍 Procurar ficheiros", "🔍 Chercher les fichiers"],

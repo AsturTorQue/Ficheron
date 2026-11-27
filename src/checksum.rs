@@ -355,7 +355,7 @@ impl Checksummer {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(tr("COMPARAR CON")).small().strong().color(theme::p().sub));
                 if ui.small_button(tr("📂 Cargar archivo de sumas…")).on_hover_text(tr("Un archivo con líneas «suma  nombre», como SHA256SUMS o los .md5/.sha1")).clicked() {
-                    self.load_picker = Some(Picker::new(self.base.clone()));
+                    self.load_picker = Some(Picker { folders_ok: false, ..Picker::new(self.base.clone()) });
                 }
                 if !self.expected.is_empty() && ui.small_button(tr("Borrar")).clicked() {
                     self.expected.clear();

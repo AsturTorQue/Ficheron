@@ -388,7 +388,7 @@ impl Comparer {
             if ui.button(tr("📂 Examinar…")).clicked() {
                 let cur = if left { &self.a } else { &self.b };
                 let start = Path::new(cur.trim()).parent().filter(|p| p.is_dir()).map(Path::to_path_buf).unwrap_or_else(|| self.base.clone());
-                self.pick = Some((left, Picker::new(start)));
+                self.pick = Some((left, Picker { folders_ok: false, ..Picker::new(start) }));
             }
         });
     }
