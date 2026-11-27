@@ -398,6 +398,11 @@ pub struct MetaTool {
     fold_form: Option<bool>,
     scroll_to: bool,
     detail_filter: String,
+    /// Edit every ticked file at once instead of only the chosen one.
+    edit_all: bool,
+    /// The chosen file's values when it was picked, to see what was changed.
+    orig_image: Vec<String>,
+    orig_audio: Vec<String>,
 }
 
 impl MetaTool {
@@ -425,6 +430,9 @@ impl MetaTool {
             fold_form: None,
             scroll_to: false,
             detail_filter: String::new(),
+            edit_all: false,
+            orig_image: vec![String::new(); IMAGE_FIELDS.len()],
+            orig_audio: vec![String::new(); AUDIO_FIELDS.len()],
         }
     }
 
@@ -478,7 +486,14 @@ impl MetaTool {
         }
         // Photos take the photo fields and songs the music ones; a file whose kind has no field
         // ticked is left alone (not an error).
-        let jobs: Vec<(PathBuf, Kind)> = self.rows.iter().filter(|r| r.on && if is_image(r.kind) { !img.set.is_empty() } else { !aud.set.is_empty() }).map(|r| (r.path.clone(), r.kind)).collect();
+        let (all, sel) = (self.edit_all, self.selected);
+        let jobs: Vec<(PathBuf, Kind)> = self
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(i, r)| (if all { r.on } else { sel == Some(*i) }) && if is_image(r.kind) { !img.set.is_empty() } else { !aud.set.is_empty() })
+            .map(|(_, r)| (r.path.clone(), r.kind))
+            .collect();
         if jobs.is_empty() {
             let msg = if img.set.is_empty() { tr("Los campos marcados son de música, pero no hay ninguna canción marcada.") } else { tr("Los campos marcados son de fotos, pero no hay ninguna foto marcada.") };
             self.status = Some((msg.to_string(), true));
@@ -559,8 +574,8 @@ impl MetaTool {
                     }
                 }
                 if let Some(k) = self.selected {
-                    if let Some(r) = self.rows.get(k) {
-                        self.details = read_all(&r.path);
+                    if k < self.rows.len() {
+                        self.select(k);
                     }
                 }
                 self.status = Some((trf!("Listo: {} archivo(s) cambiados · {} con error", ok, bad), bad > 0));
@@ -783,63 +798,104 @@ impl MetaTool {
         if let Some(ex) = read_exif(&self.rows[i].path) {
             let get = |t: exif::Tag| ex.get_field(t, exif::In::PRIMARY).map(|f| f.display_value().to_string().trim_matches('"').trim().to_string()).unwrap_or_default();
             let vals = [get(exif::Tag::ImageDescription), get(exif::Tag::Artist), get(exif::Tag::Copyright), get(exif::Tag::Software), get(exif::Tag::Make), get(exif::Tag::Model), String::new()];
-            for (f, v) in self.image_fields.iter_mut().zip(vals) {
-                if !f.0 {
-                    f.1 = v;
-                }
-            }
+            let d = get(exif::Tag::DateTimeOriginal);
             // "2024-05-31 18:30:00": only the date part uses dashes.
-            if !self.image_fields[6].0 {
-                let d = get(exif::Tag::DateTimeOriginal);
-                if d.len() == 19 {
-                    self.image_fields[6].1 = format!("{} {}", d[..10].replace(':', "-"), &d[11..]);
-                }
-            }
+            let date = if d.len() == 19 { format!("{} {}", d[..10].replace(':', "-"), &d[11..]) } else { String::new() };
+            self.orig_image = vals.into_iter().take(6).chain(std::iter::once(date)).collect();
+        } else {
+            self.orig_image = vec![String::new(); IMAGE_FIELDS.len()];
         }
+        self.orig_audio = vec![String::new(); AUDIO_FIELDS.len()];
         if self.rows[i].kind == Kind::Audio {
             if let Ok(tf) = lofty::read_from_path(&self.rows[i].path) {
                 if let Some(t) = tf.primary_tag().or_else(|| tf.first_tag()) {
                     let vals = [t.title().map(|s| s.to_string()), t.artist().map(|s| s.to_string()), t.album().map(|s| s.to_string()), t.year().map(|y| y.to_string()), t.track().map(|y| y.to_string()), t.genre().map(|s| s.to_string()), t.comment().map(|s| s.to_string())];
-                    for (f, v) in self.audio_fields.iter_mut().zip(vals) {
-                        if !f.0 {
-                            f.1 = v.unwrap_or_default();
-                        }
-                    }
+                    self.orig_audio = vals.into_iter().map(Option::unwrap_or_default).collect();
                 }
+            }
+        }
+        // One file at a time: the fields show exactly this file, nothing changed yet. Editing
+        // many at once keeps what was already typed for the others.
+        for (f, v) in self.image_fields.iter_mut().zip(&self.orig_image).chain(self.audio_fields.iter_mut().zip(&self.orig_audio)) {
+            if !self.edit_all {
+                *f = (false, v.clone());
+            } else if !f.0 {
+                f.1 = v.clone();
             }
         }
     }
 
     fn edit_ui(&mut self, ui: &mut egui::Ui) {
-        let photos = self.rows.iter().filter(|r| r.on && is_image(r.kind)).count();
-        let songs = self.rows.iter().filter(|r| r.on && !is_image(r.kind)).count();
-        ui.label(RichText::new(tr("Marca los campos que quieres cambiar en los archivos marcados. Un campo marcado y vacío se borra. Al elegir un archivo de la lista, los campos parten de sus valores.")).small().color(theme::p().muted));
+        let before = self.edit_all;
+        ui.horizontal_wrapped(|ui| {
+            crate::ui_kit::label(ui, tr("Cambiar en"));
+            let name = self.selected.and_then(|k| self.rows.get(k)).map(|r| r.path.file_name().unwrap_or_default().to_string_lossy().to_string()).unwrap_or_default();
+            ui.selectable_value(&mut self.edit_all, false, trf!("Solo «{}»", name)).on_hover_text(tr("Los campos muestran los valores de este archivo: cambia solo lo que quieras."));
+            let marked = self.rows.iter().filter(|r| r.on).count();
+            ui.selectable_value(&mut self.edit_all, true, trf!("Todos los marcados ({})", marked)).on_hover_text(tr("Los campos marcados se ponen igual en todos los archivos marcados de la lista."));
+        });
+        if before != self.edit_all {
+            if let Some(k) = self.selected {
+                self.select(k);
+            }
+        }
+        let (photos, songs) = if self.edit_all {
+            (self.rows.iter().filter(|r| r.on && is_image(r.kind)).count(), self.rows.iter().filter(|r| r.on && !is_image(r.kind)).count())
+        } else {
+            match self.selected.and_then(|k| self.rows.get(k)) {
+                Some(r) if is_image(r.kind) => (1, 0),
+                Some(_) => (0, 1),
+                None => (0, 0),
+            }
+        };
+        ui.label(RichText::new(if self.edit_all {
+            tr("Marca los campos que quieres poner igual en todos. Un campo marcado y vacío se borra.")
+        } else {
+            tr("Escribe encima lo que quieras cambiar: solo se aplican los campos cambiados (se marcan solos). Un campo vaciado se borra.")
+        }).small().color(theme::p().muted));
         if photos + songs == 0 {
-            ui.label(RichText::new(tr("No hay archivos marcados en la lista.")).color(theme::p().danger));
+            ui.label(RichText::new(if self.edit_all { tr("No hay archivos marcados en la lista.") } else { tr("Elige un archivo de la lista.") }).color(theme::p().danger));
             return;
         }
-        let show = |ui: &mut egui::Ui, title: String, ids: &[(&str, &str)], fields: &mut Vec<(bool, String)>| {
+        let all = self.edit_all;
+        let show = |ui: &mut egui::Ui, title: String, ids: &[(&str, &str)], fields: &mut Vec<(bool, String)>, orig: &[String]| {
             ui.add_space(4.0);
             ui.label(RichText::new(title).small().strong().color(theme::p().sub));
             egui::Grid::new(ids[0].0).num_columns(2).spacing([10.0, 4.0]).show(ui, |ui| {
-                for ((id, label), f) in ids.iter().zip(fields.iter_mut()) {
-                    ui.checkbox(&mut f.0, tr(label));
+                for (((id, label), f), o) in ids.iter().zip(fields.iter_mut()).zip(orig) {
+                    let changed = f.0;
+                    ui.checkbox(&mut f.0, RichText::new(tr(label)).color(if changed { theme::accent() } else { theme::p().text }))
+                        .on_hover_text(if all { tr("Marcado: se cambia en todos") } else { tr("Marcado: se guarda este campo. Desmárcalo para dejarlo como estaba.") });
+                    if !all && !f.0 && f.1 != *o {
+                        // Unticked by hand: back to what the file has.
+                        if !ui.ctx().memory(|m| m.has_focus(egui::Id::new(("meta_field", *id)))) {
+                            f.1 = o.clone();
+                        }
+                    }
                     let hint = match *id {
                         "date" => "2024-05-31 18:30:00",
                         "year" => "2024",
                         _ => "",
                     };
-                    ui.add_enabled(f.0, egui::TextEdit::singleline(&mut f.1).hint_text(hint).desired_width(320.0));
+                    let r = ui.add(egui::TextEdit::singleline(&mut f.1).id(egui::Id::new(("meta_field", *id))).hint_text(hint).desired_width(320.0));
+                    if r.changed() {
+                        // Typing in a field ticks it (or unticks it when it is back to the file's value).
+                        f.0 = all || f.1 != *o;
+                    }
+                    if !all && f.0 {
+                        r.on_hover_text(trf!("Antes: «{}»", o));
+                    }
                     ui.end_row();
                 }
             });
         };
-        // Only the fields that fit what is ticked: photo fields for photos, music tags for songs.
         if photos > 0 {
-            show(ui, trf!("FOTOS ({} marcada(s))", photos), &IMAGE_FIELDS, &mut self.image_fields);
+            let title = if all { trf!("FOTOS ({} marcada(s))", photos) } else { tr("FOTO").to_string() };
+            show(ui, title, &IMAGE_FIELDS, &mut self.image_fields, &self.orig_image);
         }
         if songs > 0 {
-            show(ui, trf!("MÚSICA ({} marcada(s))", songs), &AUDIO_FIELDS, &mut self.audio_fields);
+            let title = if all { trf!("MÚSICA ({} marcada(s))", songs) } else { tr("CANCIÓN").to_string() };
+            show(ui, title, &AUDIO_FIELDS, &mut self.audio_fields, &self.orig_audio);
             if photos == 0 {
                 ui.label(RichText::new(tr("En la música la fecha es el «Año».")).small().color(theme::p().muted));
             }
@@ -847,12 +903,19 @@ impl MetaTool {
         let img_on = photos > 0 && self.image_fields.iter().any(|f| f.0);
         let aud_on = songs > 0 && self.audio_fields.iter().any(|f| f.0);
         let n = if img_on { photos } else { 0 } + if aud_on { songs } else { 0 };
+        let fields = if img_on { self.image_fields.iter().filter(|f| f.0).count() } else { 0 } + if aud_on { self.audio_fields.iter().filter(|f| f.0).count() } else { 0 };
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.checkbox(&mut self.backup, tr("Guardar copia .bak"));
-            let btn = egui::Button::new(RichText::new(trf!("✏ Aplicar a {} archivo(s)", n)).color(Color32::WHITE).strong()).fill(theme::accent());
-            if ui.add_enabled(n > 0, btn).on_disabled_hover_text(tr("Marca al menos un campo para cambiar.")).clicked() {
+            let label = if all { trf!("✏ Aplicar a {} archivo(s)", n) } else { trf!("💾 Guardar {} cambio(s)", fields) };
+            let btn = egui::Button::new(RichText::new(label).color(Color32::WHITE).strong()).fill(theme::accent());
+            if ui.add_enabled(n > 0, btn).on_disabled_hover_text(tr("No has cambiado ningún campo.")).clicked() {
                 self.run_edit();
+            }
+            if !all && fields > 0 && ui.button(tr("Descartar")).clicked() {
+                if let Some(k) = self.selected {
+                    self.select(k);
+                }
             }
         });
     }
