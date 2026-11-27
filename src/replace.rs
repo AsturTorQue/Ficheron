@@ -132,6 +132,23 @@ fn preview(path: &Path, re: &Regex, o: &Opts) -> FileRes {
     r
 }
 
+/// Only counts the matches: the list of files is found this way, and the lines of each file
+/// are worked out when it is chosen (`preview`).
+fn scan(path: &Path, re: &Regex, o: &Opts) -> FileRes {
+    let mut r = FileRes { path: path.to_path_buf(), ..Default::default() };
+    match read_text(path, o.max_bytes) {
+        Ok(t) => {
+            r.count = re.find_iter(&t).count();
+            r.on = r.count > 0;
+        }
+        Err(e) => r.note = Some(e),
+    }
+    r
+}
+
+/// Which file and which texts a preview was made for.
+type DetailKey = (PathBuf, String, String, bool, bool, bool);
+
 /// Replaces in the file (a temp file, then rename) after keeping a .bak copy if asked.
 fn apply(path: &Path, re: &Regex, o: &Opts) -> FileRes {
     let mut r = FileRes { path: path.to_path_buf(), ..Default::default() };
@@ -186,6 +203,12 @@ pub struct Replacer {
     scroll_to: bool,
     fold_form: Option<bool>,
     kept: Option<(PathBuf, usize)>,
+    /// The chosen file's lines, before and after, made when it is chosen or the texts change.
+    detail: Option<(DetailKey, FileRes)>,
+    /// The search the file list was made with (text, regex, case, word).
+    scanned_with: Option<(String, bool, bool, bool)>,
+    /// Asking to confirm the replacement.
+    confirm: bool,
     status: Option<(String, bool)>,
     problems: Vec<String>,
 }
@@ -207,6 +230,9 @@ impl Replacer {
             scroll_to: false,
             fold_form: None,
             kept: None,
+            detail: None,
+            scanned_with: None,
+            confirm: false,
             status: None,
             problems: vec![],
         }
@@ -263,12 +289,17 @@ impl Replacer {
                 if c2.load(Ordering::Relaxed) {
                     break;
                 }
-                out.push(if do_apply { apply(f, &re, &o) } else { preview(f, &re, &o) });
+                out.push(if do_apply { apply(f, &re, &o) } else { scan(f, &re, &o) });
                 d2.fetch_add(1, Ordering::Relaxed);
             }
             let _ = tx.send((out, files.len(), do_apply));
         });
         let keep = self.cur.and_then(|(f, h)| self.results.get(f).map(|r| (r.path.clone(), h)));
+        if !do_apply {
+            self.scanned_with = Some(self.find_key());
+        }
+        self.confirm = false;
+        self.detail = None;
         self.results.clear();
         self.kept = keep;
         self.cur = None;
@@ -297,7 +328,7 @@ impl Replacer {
         // After applying, the list keeps what was done; a preview shows only files with matches.
         self.results = if applied { results } else { results.into_iter().filter(|r| r.count > 0).collect() };
         // Stay on the file that was being looked at.
-        self.cur = self.kept.take().and_then(|(p, h)| self.results.iter().position(|r| r.path == p).map(|f| (f, h.min(self.results[f].hits.len().saturating_sub(1)))));
+        self.cur = self.kept.take().and_then(|(p, h)| self.results.iter().position(|r| r.path == p).map(|f| (f, h)));
         self.scroll_to = true;
         if !self.results.is_empty() && !applied {
             self.fold_form = Some(false);
@@ -337,15 +368,16 @@ impl Replacer {
         }
         ui.separator();
         let ticked = self.results.iter().filter(|r| r.on && r.count > 0).count();
-        ui.horizontal(|ui| {
+        let stale = !self.results.is_empty() && !self.applied && self.scanned_with.as_ref() != Some(&self.find_key());
+        ui.horizontal_wrapped(|ui| {
             let can = !busy && !self.src.items.is_empty();
-            if ui.add_enabled(can, egui::Button::new(RichText::new(tr("🔍 Vista previa")).strong())).clicked() {
+            if ui.add_enabled(can, egui::Button::new(RichText::new(tr("🔍 Buscar archivos")).strong())).on_hover_text(tr("Busca qué archivos tienen el texto. El cambio de cada uno se ve al elegirlo en la lista.")).clicked() {
                 self.start(false);
             }
-            let ready = can && !self.applied && ticked > 0;
+            let ready = can && !self.applied && ticked > 0 && !stale;
             let btn = egui::Button::new(RichText::new(trf!("✏ Reemplazar en {} archivo(s)", ticked)).color(Color32::WHITE).strong()).fill(theme::accent());
-            if ui.add_enabled(ready, btn).on_hover_text(tr("Primero haz la vista previa; se cambian solo los archivos marcados.")).clicked() {
-                self.start(true);
+            if ui.add_enabled(ready && !self.confirm, btn).on_hover_text(tr("Se cambian solo los archivos marcados. Pide confirmación antes.")).clicked() {
+                self.confirm = true;
             }
             if let Some(job) = &self.job {
                 ui.spinner();
@@ -361,6 +393,30 @@ impl Replacer {
                 ui.label(RichText::new(s).color(if *err { theme::p().danger } else { theme::p().ok }));
             }
         });
+        if stale {
+            ui.label(RichText::new(tr("Has cambiado el texto a buscar: pulsa «Buscar archivos» para actualizar la lista antes de reemplazar.")).color(theme::p().danger));
+            self.confirm = false;
+        }
+        if self.confirm {
+            egui::Frame::new().fill(theme::p().danger.gamma_multiply(0.12)).stroke(egui::Stroke::new(1.0_f32, theme::p().danger)).corner_radius(6.0).inner_margin(10.0).show(ui, |ui| {
+                ui.label(RichText::new(trf!("⚠ Vas a cambiar {} archivo(s): «{}» por «{}».", ticked, self.o.find, self.o.replace)).strong());
+                ui.label(if self.o.backup {
+                    tr("Esta operación no se puede deshacer desde aquí. Se guarda una copia .bak de cada archivo, con la que podrías recuperarlo a mano.")
+                } else {
+                    tr("Esta operación no se puede deshacer y no se guardan copias .bak: los archivos quedarán cambiados.")
+                });
+                ui.horizontal(|ui| {
+                    let yes = egui::Button::new(RichText::new(tr("Sí, reemplazar")).color(Color32::WHITE).strong()).fill(theme::p().danger);
+                    if ui.add(yes).clicked() {
+                        self.confirm = false;
+                        self.start(true);
+                    }
+                    if ui.button(tr("Cancelar")).clicked() {
+                        self.confirm = false;
+                    }
+                });
+            });
+        }
         if !self.problems.is_empty() {
             ui.collapsing(trf!("⚠ {} problema(s)", self.problems.len()), |ui| {
                 for p in self.problems.iter().take(50) {
@@ -405,18 +461,50 @@ impl Replacer {
         (0..self.results.len()).filter(|&i| q.is_empty() || self.results[i].path.to_string_lossy().to_lowercase().contains(&q)).collect()
     }
 
+    fn find_key(&self) -> (String, bool, bool, bool) {
+        (self.o.find.clone(), self.o.regex, self.o.case, self.o.word)
+    }
+
+    /// Works out the chosen file's lines (only that file), again whenever the texts change.
+    /// Returns how many lines it has.
+    fn ensure_detail(&mut self, fi: usize) -> usize {
+        let key: DetailKey = (self.results[fi].path.clone(), self.o.find.clone(), self.o.replace.clone(), self.o.regex, self.o.case, self.o.word);
+        if self.detail.as_ref().map(|d| d.0 != key).unwrap_or(true) {
+            self.o.max_bytes = self.max_mb as u64 * 1024 * 1024;
+            let r = match build(&self.o) {
+                Ok(re) => preview(&key.0, &re, &self.o),
+                Err(e) => FileRes { note: Some(e), ..Default::default() },
+            };
+            self.detail = Some((key, r));
+        }
+        self.detail.as_ref().map(|d| d.1.hits.len()).unwrap_or(0)
+    }
+
+    /// Next or previous line; past the end of a file it goes on to the next (or previous) file.
     fn step(&mut self, files: &[usize], step: i64) {
-        let flat: Vec<(usize, usize)> = files.iter().flat_map(|&f| (0..self.results[f].hits.len()).map(move |h| (f, h))).collect();
-        if flat.is_empty() {
+        if files.is_empty() {
             return;
         }
-        let at = self.cur.and_then(|c| flat.iter().position(|x| *x == c));
-        let next = match at {
-            Some(i) => (i as i64 + step).rem_euclid(flat.len() as i64) as usize,
-            None if step < 0 => flat.len() - 1,
-            None => 0,
+        let (f, h) = match self.cur {
+            Some(c) => c,
+            None => {
+                let f = if step < 0 { files[files.len() - 1] } else { files[0] };
+                let n = self.ensure_detail(f);
+                self.cur = Some((f, if step < 0 { n.saturating_sub(1) } else { 0 }));
+                self.scroll_to = true;
+                return;
+            }
         };
-        self.cur = Some(flat[next]);
+        let n = self.ensure_detail(f) as i64;
+        let nh = h as i64 + step;
+        if nh >= 0 && nh < n {
+            self.cur = Some((f, nh as usize));
+        } else {
+            let pos = files.iter().position(|&x| x == f).unwrap_or(0) as i64;
+            let nf = files[(pos + step).rem_euclid(files.len() as i64) as usize];
+            let len = self.ensure_detail(nf);
+            self.cur = Some((nf, if step < 0 { len.saturating_sub(1) } else { 0 }));
+        }
         self.scroll_to = true;
     }
 
@@ -426,8 +514,9 @@ impl Replacer {
             self.cur = files.first().map(|&f| (f, 0));
             self.scroll_to = true;
         }
-        let flat_len: usize = files.iter().map(|&f| self.results[f].hits.len()).sum();
-        let pos = self.cur.map(|(cf, ch)| files.iter().take_while(|&&f| f != cf).map(|&f| self.results[f].hits.len()).sum::<usize>() + ch + 1).unwrap_or(0);
+        let cur_len = self.cur.map(|(f, _)| self.ensure_detail(f)).unwrap_or(0);
+        let file_pos = self.cur.and_then(|(f, _)| files.iter().position(|&x| x == f)).map(|p| p + 1).unwrap_or(0);
+        let where_ = trf!("Línea {} de {} · archivo {} de {}", self.cur.map(|c| c.1 + 1).unwrap_or(0).min(cur_len), cur_len, file_pos, files.len());
         let mut step = 0i64;
         let applied = self.applied;
         ui.horizontal_wrapped(|ui| {
@@ -438,7 +527,7 @@ impl Replacer {
             if ui.button(tr("◀ Anterior")).on_hover_text(tr("Mayús + F3")).clicked() {
                 step = -1;
             }
-            ui.label(RichText::new(trf!("{} de {}", pos.min(flat_len), flat_len)).strong());
+            ui.label(RichText::new(&where_).strong());
             if ui.button(tr("Siguiente ▶")).on_hover_text(tr("F3")).clicked() {
                 step = 1;
             }
@@ -543,6 +632,9 @@ impl Replacer {
         // both ways.
         egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(egui::Margin { left: 8, ..Default::default() })).show_inside(&mut panes, |ui| {
             let Some((fi, hi)) = self.cur else { return };
+            // Only this file is read and previewed, live as the texts change.
+            self.ensure_detail(fi);
+            let d = self.detail.as_ref().map(|d| d.1.clone()).unwrap_or_default();
             let path = self.results[fi].path.clone();
             ui.add(egui::Label::new(RichText::new(path.to_string_lossy()).strong()).truncate());
             ui.horizontal(|ui| {
@@ -552,14 +644,17 @@ impl Replacer {
                 if ui.small_button(tr("📁 Carpeta")).on_hover_text(tr("Ir a la carpeta")).clicked() {
                     folder = path.parent().map(Path::to_path_buf);
                 }
-                let f = &self.results[fi];
+                let f = &d;
+                if let Some(n) = &f.note {
+                    ui.label(RichText::new(n).small().color(theme::p().danger));
+                }
                 if f.hits.len() >= MAX_HITS_PER_FILE {
                     ui.label(RichText::new(trf!("se muestran las primeras {} líneas de {} coincidencias", f.hits.len(), f.count)).small().color(theme::p().muted));
                 }
             });
             let font = FontId::monospace(13.0);
             let row_h = 44.0;
-            let hits_len = self.results[fi].hits.len();
+            let hits_len = d.hits.len();
             let list_h = ui.available_height();
             let mut sa = egui::ScrollArea::both().id_salt(("replace_hits", fi)).auto_shrink([false, false]);
             if self.scroll_to {
@@ -569,7 +664,7 @@ impl Replacer {
             sa.show_rows(ui, row_h, hits_len, |ui, range| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 for h in range {
-                    let hit = &self.results[fi].hits[h];
+                    let hit = &d.hits[h];
                     let old = ui.fonts(|f| f.layout_job(highlighted(&hit.old, &hit.ranges, font.clone(), theme::p().text, Color32::BLACK, Color32::from_rgb(255, 150, 130))));
                     let new = ui.fonts(|f| f.layout_no_wrap(hit.new.clone(), font.clone(), theme::p().ok));
                     let w = (old.size().x.max(new.size().x) + 90.0).max(ui.available_width());
