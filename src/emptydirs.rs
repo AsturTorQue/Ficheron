@@ -41,7 +41,7 @@ struct Seen {
     junk: usize,
 }
 
-fn walk(dir: &Path, depth: usize, root: &Path, c: &Cfg, out: &mut Vec<Found>, errs: &mut Vec<String>, cancel: &AtomicBool) -> Seen {
+fn walk(dir: &Path, depth: usize, c: &Cfg, out: &mut Vec<Found>, errs: &mut Vec<String>, cancel: &AtomicBool) -> Seen {
     let none = Seen { empty: false, nested: 0, junk: 0 };
     if cancel.load(Ordering::Relaxed) {
         return none;
@@ -71,7 +71,7 @@ fn walk(dir: &Path, depth: usize, root: &Path, c: &Cfg, out: &mut Vec<Found>, er
             empty = false;
         } else if ty.is_dir() {
             let before = out.len();
-            let s = walk(&e.path(), depth + 1, root, c, out, errs, cancel);
+            let s = walk(&e.path(), depth + 1, c, out, errs, cancel);
             if s.empty {
                 // Reported by the parent as one (its own entry is folded into us below).
                 out.truncate(before);
@@ -104,7 +104,7 @@ fn scan(roots: &[PathBuf], c: &Cfg, cancel: &AtomicBool) -> (Vec<Found>, Vec<Str
     let (mut out, mut errs) = (vec![], vec![]);
     for root in roots {
         let mut found = vec![];
-        let s = walk(root, 0, root, c, &mut found, &mut errs, cancel);
+        let s = walk(root, 0, c, &mut found, &mut errs, cancel);
         if s.empty && c.include_root {
             found.push(Found { path: root.clone(), nested: s.nested, junk: s.junk, on: true });
         }
@@ -403,7 +403,7 @@ mod tests {
     #[test]
     fn topmost_empty_folders_junk_and_protection() {
         let d = tree();
-        let (f, _) = scan(&[d.clone()], &cfg(), &AtomicBool::new(false));
+        let (f, _) = scan(std::slice::from_ref(&d), &cfg(), &AtomicBool::new(false));
         assert_eq!(names(&d, &f), ["a/b/vacia2", "anidada", "con_archivo/sub", "con_basura", "vacia"], "git is protected; folders with real files stay");
         let anidada = f.iter().find(|x| x.path.ends_with("anidada")).unwrap();
         assert_eq!(anidada.nested, 2, "uno and dos go with it");
@@ -411,7 +411,7 @@ mod tests {
         // Without subfolders only the direct children are listed.
         let mut c = cfg();
         c.recursive = false;
-        let (f, _) = scan(&[d.clone()], &c, &AtomicBool::new(false));
+        let (f, _) = scan(std::slice::from_ref(&d), &c, &AtomicBool::new(false));
         assert_eq!(names(&d, &f), ["anidada", "con_basura", "vacia"]);
         fs::remove_dir_all(&d).unwrap();
     }

@@ -838,10 +838,7 @@ mod tests {
 
     #[test]
     fn sizes_are_computed_for_every_mode() {
-        let mut o = Opts::default();
-        o.w = 100;
-        o.h = 100;
-        o.resize = Resize::Fit;
+        let mut o = Opts { w: 100, h: 100, resize: Resize::Fit, ..Default::default() };
         assert_eq!(target_dims(200, 100, &o), (100, 50));
         o.resize = Resize::Width;
         o.w = 50;
@@ -926,8 +923,8 @@ mod tests {
         fs::write(d.join("nota.txt"), "x").unwrap();
         fs::create_dir_all(d.join("sub")).unwrap();
         fs::copy(d.join("foto.png"), d.join("sub/otra.png")).unwrap();
-        assert_eq!(collect(&[d.clone()], false).len(), 2, "foto.png and the copy");
-        assert_eq!(collect(&[d.clone()], true).len(), 3);
+        assert_eq!(collect(std::slice::from_ref(&d), false).len(), 2, "foto.png and the copy");
+        assert_eq!(collect(std::slice::from_ref(&d), true).len(), 3);
         assert_eq!(orientation(&d.join("foto.png")), 1);
         let img = DynamicImage::ImageRgb8(image::RgbImage::new(4, 2));
         assert_eq!(apply_orientation(img.clone(), 6).dimensions(), (2, 4));

@@ -144,7 +144,7 @@ pub fn copy_recursive(src: &Path, dst: &Path) -> io::Result<()> {
     let meta = fs::symlink_metadata(src)?;
     if meta.is_dir() {
         if dst.starts_with(src) {
-            return Err(io::Error::new(io::ErrorKind::Other, crate::i18n::tr("no se puede copiar una carpeta dentro de sí misma")));
+            return Err(io::Error::other(crate::i18n::tr("no se puede copiar una carpeta dentro de sí misma")));
         }
         fs::create_dir_all(dst)?;
         for item in fs::read_dir(src)? {
@@ -255,20 +255,6 @@ pub fn canonical(p: &Path) -> PathBuf {
     }
 }
 
-#[cfg(test)]
-mod verbatim_tests {
-    use super::*;
-
-    #[test]
-    fn verbatim_prefixes_are_removed() {
-        assert_eq!(strip_verbatim(r"\\?\C:\Users\ana"), r"C:\Users\ana");
-        assert_eq!(strip_verbatim(r"\\?\UNC\srv\share\a"), r"\\srv\share\a");
-        assert_eq!(strip_verbatim(r"\\?\Volume{1234}\x"), r"\\?\Volume{1234}\x");
-        assert_eq!(strip_verbatim(r"C:\ya\normal"), r"C:\ya\normal");
-        assert_eq!(strip_verbatim("/home/ana"), "/home/ana");
-    }
-}
-
 pub fn human_size(n: u64) -> String {
     const U: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut v = n as f64;
@@ -315,4 +301,18 @@ pub fn preview_text(p: &Path) -> Option<String> {
     }
     let s = String::from_utf8_lossy(&buf).to_string();
     Some(s.lines().take(40).collect::<Vec<_>>().join("\n"))
+}
+
+#[cfg(test)]
+mod verbatim_tests {
+    use super::*;
+
+    #[test]
+    fn verbatim_prefixes_are_removed() {
+        assert_eq!(strip_verbatim(r"\\?\C:\Users\ana"), r"C:\Users\ana");
+        assert_eq!(strip_verbatim(r"\\?\UNC\srv\share\a"), r"\\srv\share\a");
+        assert_eq!(strip_verbatim(r"\\?\Volume{1234}\x"), r"\\?\Volume{1234}\x");
+        assert_eq!(strip_verbatim(r"C:\ya\normal"), r"C:\ya\normal");
+        assert_eq!(strip_verbatim("/home/ana"), "/home/ana");
+    }
 }

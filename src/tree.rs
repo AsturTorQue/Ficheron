@@ -101,7 +101,7 @@ fn walk(dir: &Path, depth: usize, c: &Cfg, seen: &mut usize, errs: &mut Vec<Stri
     (out, false)
 }
 
-fn scan(roots: &[PathBuf], c: &Cfg, cancel: &AtomicBool) -> (Vec<Node>, Stats, Vec<String>) {
+fn scan(roots: &[PathBuf], c: &Cfg, cancel: &AtomicBool) -> Scan {
     let (mut out, mut errs, mut seen) = (vec![], vec![], 0usize);
     for r in roots {
         let name = r.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| r.to_string_lossy().to_string());
@@ -146,6 +146,9 @@ fn total(n: &mut Node, depth: usize, s: &mut Stats) -> u64 {
     e.1 += n.size;
     n.size
 }
+
+/// What a reading of the folders gives: the tree, its totals and the problems met.
+type Scan = (Vec<Node>, Stats, Vec<String>);
 
 #[derive(Clone, Copy, PartialEq)]
 enum Format {
@@ -280,7 +283,7 @@ pub struct TreeTool {
     stats: Option<Stats>,
     text: String,
     problems: Vec<String>,
-    rx: Option<Receiver<(Vec<Node>, Stats, Vec<String>)>>,
+    rx: Option<Receiver<Scan>>,
     cancel: Arc<AtomicBool>,
     status: Option<(String, bool)>,
 }
@@ -529,18 +532,18 @@ mod tests {
     fn tree_totals_depth_and_filter() {
         let d = sample();
         let c = Cfg { depth: 0, hidden: false, filter: None };
-        let (n, s, _) = scan(&[d.clone()], &c, &AtomicBool::new(false));
+        let (n, s, _) = scan(std::slice::from_ref(&d), &c, &AtomicBool::new(false));
         assert_eq!((s.files, s.dirs, s.bytes, s.deepest), (3, 4, 9, 4));
         assert_eq!(s.biggest.as_ref().unwrap().1, 5);
         let o = Show { format: Format::Tree, files: true, sizes: false, dates: false };
         let t = render(&n, o);
         assert!(t.contains("├── a/\n│   ├── b/\n│   │   └── c/\n│   │       └── hondo.txt\n│   └── foto.jpg\n├── vacia/\n└── uno.txt"), "{t}");
         // Two levels: the deeper folder is marked as having more inside.
-        let (n, s, _) = scan(&[d.clone()], &Cfg { depth: 2, ..c.clone() }, &AtomicBool::new(false));
+        let (n, s, _) = scan(std::slice::from_ref(&d), &Cfg { depth: 2, ..c.clone() }, &AtomicBool::new(false));
         assert_eq!(s.files, 2);
         assert!(render(&n, o).contains("…"));
         // A filter keeps only matching files and the folders that hold them.
-        let (n, s, _) = scan(&[d.clone()], &Cfg { filter: crate::rename::name_matcher("*.jpg", false).unwrap(), ..c.clone() }, &AtomicBool::new(false));
+        let (n, s, _) = scan(std::slice::from_ref(&d), &Cfg { filter: crate::rename::name_matcher("*.jpg", false).unwrap(), ..c.clone() }, &AtomicBool::new(false));
         assert_eq!((s.files, s.dirs), (1, 1));
         assert_eq!(render(&n, Show { format: Format::Relative, ..o }), "a\na/foto.jpg".replace('/', std::path::MAIN_SEPARATOR_STR));
         fs::remove_dir_all(&d).unwrap();

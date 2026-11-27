@@ -282,13 +282,16 @@ fn target(dir: &Path, name: &str, conflict: u8, taken: &Mutex<std::collections::
     Some(out)
 }
 
+/// The parameters a derived key is cached by.
+type KeyParams = ([u8; 16], u32, u32, u32);
+
 struct Shared<'a> {
     o: &'a Opts,
     prog: &'a Progress,
     cancel: &'a AtomicBool,
     taken: Mutex<std::collections::HashSet<PathBuf>>,
     enc_key: Mutex<Option<([u8; 16], [u8; 32])>>,
-    keys: Mutex<HashMap<([u8; 16], u32, u32, u32), [u8; 32]>>,
+    keys: Mutex<HashMap<KeyParams, [u8; 32]>>,
 }
 
 fn run_one(src: &Path, sh: &Shared) -> Res {
@@ -810,10 +813,10 @@ mod tests {
         let d = dir("bad");
         let f = d.join("secreto.txt");
         fs::write(&f, "contenido muy privado ".repeat(300)).unwrap();
-        let enc = go(&[f.clone()], &opts(0, "bien"));
+        let enc = go(std::slice::from_ref(&f), &opts(0, "bien"));
         let out = enc[0].out.clone();
         assert!(out.ends_with("secreto.txt.enc"));
-        let wrong = go(&[out.clone()], &opts(1, "mal"));
+        let wrong = go(std::slice::from_ref(&out), &opts(1, "mal"));
         assert!(wrong[0].error.as_deref().unwrap().contains("contraseña incorrecta"), "{:?}", wrong[0].error);
         // Flip one byte in the data.
         let mut bytes = fs::read(&out).unwrap();
@@ -827,7 +830,7 @@ mod tests {
         fs::write(&cut, &fs::read(&out).unwrap()[..n - 300]).unwrap();
         assert!(go(&[cut], &opts(1, "bien"))[0].error.is_some(), "truncation");
         // Not an encrypted file at all.
-        assert!(go(&[f.clone()], &opts(1, "bien"))[0].error.as_deref().unwrap().contains("no es un archivo cifrado"));
+        assert!(go(std::slice::from_ref(&f), &opts(1, "bien"))[0].error.as_deref().unwrap().contains("no es un archivo cifrado"));
         // Automatic mode decrypts .enc files and encrypts the rest; conflicts are renamed.
         let auto = go(&[out.clone(), f.clone()], &opts(2, "bien"));
         assert!(auto[0].error.is_none() && !auto[0].encrypted && auto[1].encrypted, "{:?}", auto.iter().map(|r| r.error.clone()).collect::<Vec<_>>());

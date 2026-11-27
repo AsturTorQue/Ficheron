@@ -310,11 +310,10 @@ impl Walker<'_> {
                             }
                             self.dir(&path, &arc, files_only, depth + 1);
                         }
-                        Ok(m) if m.is_file() => {
-                            if self.f.include.as_ref().map(|re| re.is_match(&name)).unwrap_or(true) {
+                        Ok(m) if m.is_file()
+                            && self.f.include.as_ref().map(|re| re.is_match(&name)).unwrap_or(true) => {
                                 self.out.push(entry_of(&path, arc, &m, None));
                             }
-                        }
                         _ => {}
                     }
                 } else if self.f.tar && !files_only {

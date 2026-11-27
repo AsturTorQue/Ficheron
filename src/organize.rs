@@ -848,7 +848,7 @@ mod tests {
         assert_eq!(p.moves.len(), 3, "foto.jpg, otra.jpg and the invoice; the rest has no rule and stays");
         let renamed: Vec<String> = p.moves.iter().map(|m| m.to.file_name().unwrap().to_string_lossy().to_string()).collect();
         assert!(renamed.contains(&"foto (2).jpg".to_string()), "{renamed:?}");
-        let rep = execute(p.moves, &c, &[d.clone()], &AtomicBool::new(false));
+        let rep = execute(p.moves, &c, std::slice::from_ref(&d), &AtomicBool::new(false));
         assert!(rep.errors.is_empty(), "{:?}", rep.errors);
         assert_eq!(rep.done, 3);
         assert!(d.join("Facturas/factura-enero.pdf").exists() && !d.join("foto.jpg").exists());
@@ -865,7 +865,7 @@ mod tests {
         let mut c2 = cfg(0);
         c2.copy = true;
         c2.dest = Some(d.join("copia"));
-        let rep = execute(plan(&d, &c2).moves, &c2, &[d.clone()], &AtomicBool::new(false));
+        let rep = execute(plan(&d, &c2).moves, &c2, std::slice::from_ref(&d), &AtomicBool::new(false));
         assert!(rep.undo.is_empty() && d.join("copia/Imágenes/foto.jpg").exists() && d.join("foto.jpg").exists());
         fs::remove_dir_all(&d).unwrap();
     }

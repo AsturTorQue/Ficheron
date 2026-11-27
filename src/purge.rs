@@ -205,7 +205,7 @@ fn scan(roots: &[PathBuf], c: &Cfg, prog: &Progress, cancel: &AtomicBool) -> (Ve
                 let path = entry.path();
                 let Ok(meta) = fs::symlink_metadata(&path) else { continue };
                 scanned += 1;
-                if scanned % 500 == 0 {
+                if scanned.is_multiple_of(500) {
                     prog.entries.store(scanned, Ordering::Relaxed);
                     if let Ok(mut cur) = prog.current.lock() {
                         *cur = dir.to_string_lossy().to_string();

@@ -4,7 +4,7 @@
 //! (before and after); tick the files to change and each one keeps a .bak copy.
 
 use crate::fsops;
-use crate::grep::highlighted;
+use crate::grep::{clip, highlighted};
 use crate::i18n::tr;
 use crate::sources::Sources;
 use crate::theme;
@@ -68,23 +68,6 @@ struct FileRes {
     changed: bool,
     note: Option<String>,
     error: Option<String>,
-}
-
-fn clip(s: &str, ranges: &[(usize, usize)]) -> (String, Vec<(usize, usize)>) {
-    const MAX: usize = 2000;
-    if s.len() <= MAX {
-        return (s.to_string(), ranges.to_vec());
-    }
-    let mut start = ranges.first().map(|r| r.0).unwrap_or(0).saturating_sub(400);
-    while start > 0 && !s.is_char_boundary(start) {
-        start -= 1;
-    }
-    let mut end = (start + MAX).min(s.len());
-    while end < s.len() && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    let shifted = ranges.iter().filter(|(a, b)| *a >= start && *b <= end).map(|(a, b)| (a - start + 1, b - start + 1)).collect();
-    (format!("…{}", &s[start..end]), shifted)
 }
 
 fn read_text(path: &Path, max: u64) -> Result<String, String> {

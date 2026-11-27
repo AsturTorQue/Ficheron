@@ -106,6 +106,9 @@ fn safe_join(base: &Path, name: &str) -> Option<PathBuf> {
     any.then_some(out)
 }
 
+/// The contents of one archive (or why it couldn't be read), for the list view.
+type Listing = (PathBuf, Result<Vec<LItem>, String>);
+
 #[derive(Clone)]
 pub struct LItem {
     name: String,
@@ -423,7 +426,7 @@ pub struct Extractor {
     results: Vec<ExResult>,
     status: Option<(String, bool)>,
     listing: Option<(PathBuf, Result<Vec<LItem>, String>)>,
-    list_rx: Option<Receiver<(PathBuf, Result<Vec<LItem>, String>)>>,
+    list_rx: Option<Receiver<Listing>>,
 }
 
 const FOLDER_MODES: [&str; 3] = ["En una carpeta con el nombre del paquete", "Directamente aquí", "Inteligente: carpeta solo si hace falta"];

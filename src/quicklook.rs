@@ -107,7 +107,7 @@ impl QuickLook {
                 match &self.content {
                     Content::Image(tex, size) => {
                         let avail = ui.available_size();
-                        let scale = (avail.x / size[0] as f32).min((avail.y - 6.0) / size[1] as f32).min(1.0).max(0.05);
+                        let scale = (avail.x / size[0] as f32).min((avail.y - 6.0) / size[1] as f32).clamp(0.05, 1.0);
                         ui.vertical_centered(|ui| {
                             ui.image((tex.id(), egui::vec2(size[0] as f32 * scale, size[1] as f32 * scale)));
                         });

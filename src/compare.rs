@@ -87,7 +87,10 @@ fn normalise(s: &str, o: Options) -> String {
 }
 
 /// Byte ranges of `a` and `b` that differ, by characters.
-fn inline_ranges(a: &str, b: &str) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+/// Byte ranges (start, end) inside a line.
+type Ranges = Vec<(usize, usize)>;
+
+fn inline_ranges(a: &str, b: &str) -> (Ranges, Ranges) {
     if a.len() > MAX_INLINE || b.len() > MAX_INLINE {
         return (vec![], vec![]);
     }
@@ -197,9 +200,8 @@ fn fold(full: Vec<Row>) -> Vec<Row> {
     let mut keep = vec![false; n];
     for (i, r) in full.iter().enumerate() {
         if r.is_change() {
-            for k in i.saturating_sub(CONTEXT)..=(i + CONTEXT).min(n.saturating_sub(1)) {
-                keep[k] = true;
-            }
+            let end = (i + CONTEXT).min(n.saturating_sub(1));
+            keep[i.saturating_sub(CONTEXT)..=end].iter_mut().for_each(|k| *k = true);
         }
     }
     let mut out = Vec::with_capacity(n);

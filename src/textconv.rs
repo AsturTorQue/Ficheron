@@ -57,7 +57,7 @@ fn rs_encoding(e: Enc) -> &'static Encoding {
 /// Reads the bytes as text; `from` None detects the encoding (BOMs, then valid UTF-8, then Windows-1252).
 fn decode(bytes: &[u8], from: Option<Enc>) -> Result<(String, Enc), String> {
     let dec16 = |b: &[u8], le: bool| -> Result<String, String> {
-        let units: Vec<u16> = b.chunks_exact(2).map(|c| if le { u16::from_le_bytes([c[0], c[1]]) } else { u16::from_be_bytes([c[0], c[1]]) }).collect();
+        let units: Vec<u16> = b.as_chunks::<2>().0.iter().map(|c| if le { u16::from_le_bytes([c[0], c[1]]) } else { u16::from_be_bytes([c[0], c[1]]) }).collect();
         String::from_utf16(&units).map_err(|_| tr("UTF-16 no válido").to_string())
     };
     let e = match from {
@@ -223,7 +223,7 @@ fn transform(text: &str, o: &Opts) -> String {
                 for ch in l.chars() {
                     if ch == '\t' {
                         let n = o.tab_width - col % o.tab_width;
-                        s.extend(std::iter::repeat(' ').take(n));
+                        s.extend(std::iter::repeat_n(' ', n));
                         col += n;
                     } else {
                         s.push(ch);
@@ -815,7 +815,7 @@ mod tests {
         assert_eq!(fs::read(d.join("salida/limpio.txt")).unwrap(), b"ya\r\nlimpio\r\n");
         assert!(convert_file(&d.join("limpio.txt"), &o2).out.ends_with("limpio (copia).txt"));
         o2.include = "*.txt".into();
-        assert_eq!(collect(&[d.clone()], &o2).len(), 4, "a.txt, limpio.txt and the .bak is not a match; salida files count");
+        assert_eq!(collect(std::slice::from_ref(&d), &o2).len(), 4, "a.txt, limpio.txt and the .bak is not a match; salida files count");
         fs::remove_dir_all(&d).unwrap();
     }
 }

@@ -47,7 +47,7 @@ struct Cfg {
 }
 
 /// Shortens a very long line around the first match, keeping the highlight positions right.
-fn clip(line: &str, ranges: &[(usize, usize)]) -> (String, Vec<(usize, usize)>) {
+pub(crate) fn clip(line: &str, ranges: &[(usize, usize)]) -> (String, Vec<(usize, usize)>) {
     const MAX: usize = 2000;
     if line.len() <= MAX {
         return (line.to_string(), ranges.to_vec());

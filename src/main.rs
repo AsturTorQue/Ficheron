@@ -70,12 +70,8 @@ fn main() -> eframe::Result<()> {
     }
     let mut screenshot: Option<PathBuf> = None;
     let mut start_dir: Option<PathBuf> = None;
-    let mut open_rename = false;
-    let mut open_dupes = false;
-    let mut open_sync = false;
-    let mut open_purge = false;
-    let mut open_compress = false;
-    let mut open_tool: Option<&'static str> = None;
+    // `--grep`, `--rename`…: open that tool on start with sample data (for trying it).
+    let mut demos: Vec<Kind> = vec![];
     let mut i = 1;
     while i < args.len() {
         if (args[i] == "--lang" || args[i] == "--theme") && i + 1 < args.len() {
@@ -89,24 +85,8 @@ fn main() -> eframe::Result<()> {
                 theme::set_theme(v.parse().unwrap_or(0));
             }
             i += 2;
-        } else if let Some(t) = ["--extract", "--organize", "--grep", "--images", "--crypt", "--mkdirs", "--text", "--replace", "--checksum", "--empty", "--meta", "--compare", "--integrity"].iter().find(|t| **t == args[i]) {
-            open_tool = Some(t);
-            i += 1;
-        } else if args[i] == "--compress" {
-            open_compress = true;
-            i += 1;
-        } else if args[i] == "--purge" {
-            open_purge = true;
-            i += 1;
-        } else if args[i] == "--sync" {
-            open_sync = true;
-            i += 1;
-        } else if args[i] == "--dupes" {
-            open_dupes = true;
-            i += 1;
-        } else if args[i] == "--rename" {
-            // Open the batch rename tool on start (handy for trying it).
-            open_rename = true;
+        } else if let Some((_, k)) = DEMO_FLAGS.iter().find(|(f, _)| *f == args[i]) {
+            demos.push(*k);
             i += 1;
         } else if args[i] == "--tool" && i + 1 < args.len() {
             // From the system's right-click menu: `--tool <id> <files…>` opens that tool on them.
@@ -171,11 +151,11 @@ fn main() -> eframe::Result<()> {
                 b.with_activate_ignoring_other_apps(false);
             }));
         }
-        let (sd, sc, ot) = (start_dir.clone(), screenshot.clone(), open_tool);
+        let (sd, sc, dm) = (start_dir.clone(), screenshot.clone(), demos.clone());
         last = eframe::run_native(
             APP_NAME,
             options,
-            Box::new(move |cc| Ok(Box::new(App::new(cc, sd, sc, open_rename, open_dupes, open_sync, open_purge, open_compress, ot)))),
+            Box::new(move |cc| Ok(Box::new(App::new(cc, sd, sc, dm)))),
         );
         match &last {
             Ok(()) => return Ok(()),
@@ -205,6 +185,28 @@ fn software_friendly_wgpu() -> eframe::egui_wgpu::WgpuConfiguration {
 }
 
 const APP_NAME: &str = "Ficherón";
+
+/// Start-up flags that open a tool with sample data, for trying it out.
+const DEMO_FLAGS: [(&str, Kind); 18] = [
+    ("--extract", Kind::Extract),
+    ("--organize", Kind::Organize),
+    ("--grep", Kind::Grep),
+    ("--images", Kind::Images),
+    ("--crypt", Kind::Crypt),
+    ("--mkdirs", Kind::MakeFolders),
+    ("--text", Kind::TextConv),
+    ("--replace", Kind::Replace),
+    ("--checksum", Kind::Checksum),
+    ("--empty", Kind::RemoveEmpty),
+    ("--meta", Kind::Meta),
+    ("--compare", Kind::Compare),
+    ("--integrity", Kind::Integrity),
+    ("--compress", Kind::Compress),
+    ("--purge", Kind::DeleteByMask),
+    ("--sync", Kind::Sync),
+    ("--dupes", Kind::Duplicates),
+    ("--rename", Kind::BatchRename),
+];
 /// A tool to open on start, asked for from the system's right-click menu.
 static LAUNCH: std::sync::OnceLock<(Kind, Vec<PathBuf>)> = std::sync::OnceLock::new();
 /// Matches `packaging/ficheron.desktop` so Wayland shows the program's own icon.
@@ -444,7 +446,7 @@ fn section_title(ui: &mut egui::Ui, s: &str) {
 }
 
 impl App {
-    fn new(cc: &eframe::CreationContext<'_>, start: Option<PathBuf>, screenshot: Option<PathBuf>, open_rename: bool, open_dupes: bool, open_sync: bool, open_purge: bool, open_compress: bool, open_tool: Option<&'static str>) -> Self {
+    fn new(cc: &eframe::CreationContext<'_>, start: Option<PathBuf>, screenshot: Option<PathBuf>, demos: Vec<Kind>) -> Self {
         // Screenshots only see the main window, so tools are drawn inside it in that mode.
         if screenshot.is_some() {
             cc.egui_ctx.set_embed_viewports(true);
@@ -529,54 +531,19 @@ impl App {
                 app.quick = Some(quicklook::QuickLook::open(&cc.egui_ctx, &e));
             }
         }
-        if let Some(tool) = open_tool {
-            let kind = match tool {
-                "--extract" => Kind::Extract,
-                "--organize" => Kind::Organize,
-                "--images" => Kind::Images,
-                "--crypt" => Kind::Crypt,
-                "--mkdirs" => Kind::MakeFolders,
-                "--text" => Kind::TextConv,
-                "--replace" => Kind::Replace,
-                "--checksum" => Kind::Checksum,
-                "--empty" => Kind::RemoveEmpty,
-                "--meta" => Kind::Meta,
-                "--compare" => Kind::Compare,
-                "--integrity" => Kind::Integrity,
-                _ => Kind::Grep,
-            };
+        for kind in demos {
             let mut t = ToolWindow::new(0, kind, vec![], app.cwd.clone());
             match kind {
                 Kind::Extract => t.extract_demo(&app.cwd),
                 Kind::Organize => t.organize_demo(&app.cwd),
-                Kind::Images | Kind::Crypt | Kind::MakeFolders | Kind::TextConv | Kind::Replace | Kind::Checksum | Kind::RemoveEmpty | Kind::Meta | Kind::Compare | Kind::Integrity => t.new_demo(&app.cwd),
-                _ => t.grep_demo(&app.cwd, "mundo"),
+                Kind::Grep => t.grep_demo(&app.cwd, "mundo"),
+                Kind::Compress => t.compress_demo(&app.cwd),
+                Kind::DeleteByMask => t.purge_demo(&app.cwd),
+                Kind::Sync => t.sync_demo(&app.cwd.join("a"), &app.cwd.join("b")),
+                Kind::Duplicates => t.dupes_demo(),
+                Kind::BatchRename => t.rename_demo(),
+                _ => t.new_demo(&app.cwd),
             }
-            app.tools.push(t);
-        }
-        if open_compress {
-            let mut t = ToolWindow::new(0, Kind::Compress, vec![], app.cwd.clone());
-            t.compress_demo(&app.cwd);
-            app.tools.push(t);
-        }
-        if open_purge {
-            let mut t = ToolWindow::new(0, Kind::DeleteByMask, vec![], app.cwd.clone());
-            t.purge_demo(&app.cwd);
-            app.tools.push(t);
-        }
-        if open_sync {
-            let mut t = ToolWindow::new(0, Kind::Sync, vec![], app.cwd.clone());
-            t.sync_demo(&app.cwd.join("a"), &app.cwd.join("b"));
-            app.tools.push(t);
-        }
-        if open_dupes {
-            let mut t = ToolWindow::new(0, Kind::Duplicates, vec![], app.cwd.clone());
-            t.dupes_demo();
-            app.tools.push(t);
-        }
-        if open_rename {
-            let mut t = ToolWindow::new(0, Kind::BatchRename, vec![], app.cwd.clone());
-            t.rename_demo();
             app.tools.push(t);
         }
         app
@@ -1128,7 +1095,7 @@ impl App {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 help::menu(ui, &mut self.help);
-                ui.menu_button(tr("🎨 Apariencia"), |ui| appearance_menu(ui));
+                ui.menu_button(tr("🎨 Apariencia"), appearance_menu);
                 if ui.selectable_label(self.show_panel, tr("Panel")).on_hover_text(tr("Panel lateral derecho")).clicked() {
                     self.show_panel = !self.show_panel;
                 }
@@ -1300,7 +1267,7 @@ impl App {
                 ui.label(RichText::new(tr("Utilidades para archivos y carpetas")).color(theme::p().sub));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     help::menu(ui, &mut self.help);
-                    ui.menu_button(tr("🎨 Apariencia"), |ui| appearance_menu(ui));
+                    ui.menu_button(tr("🎨 Apariencia"), appearance_menu);
                     if ui.button(tr("🖱 Menú contextual del sistema…")).on_hover_text(tr("Añade las herramientas al clic derecho del explorador de archivos del sistema")).clicked() {
                         self.integration = Some(None);
                     }
