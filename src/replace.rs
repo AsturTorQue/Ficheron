@@ -219,7 +219,7 @@ impl Replacer {
         src.include = "*.txt; *.md; *.csv; *.json; *.xml; *.html; *.css; *.js; *.ts; *.py; *.rs; *.c; *.h; *.cpp; *.java; *.yml; *.yaml; *.toml; *.ini; *.log; *.sh; *.sql".into();
         Replacer {
             src,
-            o: Opts { find: String::new(), replace: String::new(), regex: false, case: false, word: false, backup: true, max_bytes: 20 << 20 },
+            o: Opts { find: String::new(), replace: String::new(), regex: false, case: false, word: false, backup: false, max_bytes: 20 << 20 },
             max_mb: 20,
             job: None,
             results: vec![],
@@ -379,6 +379,7 @@ impl Replacer {
             if ui.add_enabled(ready && !self.confirm, btn).on_hover_text(tr("Se cambian solo los archivos marcados. Pide confirmación antes.")).clicked() {
                 self.confirm = true;
             }
+            ui.checkbox(&mut self.o.backup, tr("Guardar copia .bak")).on_hover_text(tr("Deja junto a cada archivo cambiado una copia del original (nombre.bak). Desmarcado no se crea ningún archivo extra."));
             if let Some(job) = &self.job {
                 ui.spinner();
                 let (d, t) = (job.done.load(Ordering::Relaxed), job.total.load(Ordering::Relaxed));
@@ -405,6 +406,7 @@ impl Replacer {
                 } else {
                     tr("Esta operación no se puede deshacer y no se guardan copias .bak: los archivos quedarán cambiados.")
                 });
+                ui.checkbox(&mut self.o.backup, tr("Guardar copia .bak"));
                 ui.horizontal(|ui| {
                     let yes = egui::Button::new(RichText::new(tr("Sí, reemplazar")).color(Color32::WHITE).strong()).fill(theme::p().danger);
                     if ui.add(yes).clicked() {
@@ -449,7 +451,6 @@ impl Replacer {
             ui.checkbox(&mut self.o.case, tr("Distinguir mayúsculas"));
             ui.checkbox(&mut self.o.word, tr("Palabra completa"));
             if full {
-                ui.checkbox(&mut self.o.backup, tr("Guardar una copia .bak del original"));
                 ui.label(tr("Tamaño máximo"));
                 ui.add(egui::DragValue::new(&mut self.max_mb).range(1..=2048).suffix(" MB"));
             }
