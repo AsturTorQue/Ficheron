@@ -1274,6 +1274,14 @@ impl App {
 
     }
 
+    /// Opens «Buscar y reemplazar» on what a text search found.
+    fn open_replace(&mut self, files: Vec<PathBuf>, find: String, regex: bool, case: bool, word: bool) {
+        let mut t = ToolWindow::new(self.next_tool, Kind::Replace, vec![], self.cwd.clone());
+        t.prefill_replace(files, find, regex, case, word);
+        self.tools.push(t);
+        self.next_tool += 1;
+    }
+
     /// Opens a tool from the start screen.
     fn hub_open(&mut self, k: Kind) {
         // Every tool chooses its files itself («Examinar…»), so it opens straight away.
@@ -1373,6 +1381,11 @@ impl App {
                 ToolEvent::Navigate(p) => {
                     to_explorer = true;
                     self.navigate(p);
+                }
+                ToolEvent::ReplaceIn(files, find, regex, case, word) => {
+                    // A second tool: it opens over the explorer like any other window.
+                    to_explorer = true;
+                    self.open_replace(files, find, regex, case, word);
                 }
             }
         }
@@ -2351,6 +2364,7 @@ impl eframe::App for App {
                     self.explorer = true;
                     acts.push(Action::Navigate(p));
                 }
+                ToolEvent::ReplaceIn(files, find, regex, case, word) => self.open_replace(files, find, regex, case, word),
             }
         }
 

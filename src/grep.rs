@@ -440,6 +440,9 @@ impl Searcher {
                 if ui.button(tr("📋 Copiar rutas")).clicked() {
                     events.push(ToolEvent::Clipboard(self.results.iter().map(|f| f.path.to_string_lossy().to_string()).collect::<Vec<_>>().join("\n")));
                 }
+                if ui.button(tr("✏ Reemplazar en estos archivos…")).on_hover_text(tr("Abre «Buscar y reemplazar» con estos archivos y este texto, para cambiarlo con vista previa")).clicked() {
+                    events.push(ToolEvent::ReplaceIn(self.results.iter().map(|f| f.path.clone()).collect(), self.query.clone(), self.regex, self.case, self.whole));
+                }
             }
         });
     }
@@ -632,8 +635,8 @@ impl Searcher {
                     copy = self.results[fi].hits.get(hi).map(|h| h.text.clone());
                 }
                 let f = &self.results[fi];
-                if f.count > f.hits.len() {
-                    ui.label(RichText::new(trf!("se muestran {} de {} coincidencias", f.hits.len(), f.count)).small().color(theme::p().muted));
+                if f.hits.len() >= MAX_PER_FILE {
+                    ui.label(RichText::new(trf!("se muestran las primeras {} líneas de {} coincidencias", f.hits.len(), f.count)).small().color(theme::p().muted));
                 }
             });
             let ctx_lines = self.context;

@@ -71,11 +71,11 @@ struct FileRes {
 }
 
 fn clip(s: &str, ranges: &[(usize, usize)]) -> (String, Vec<(usize, usize)>) {
-    const MAX: usize = 240;
+    const MAX: usize = 2000;
     if s.len() <= MAX {
         return (s.to_string(), ranges.to_vec());
     }
-    let mut start = ranges.first().map(|r| r.0).unwrap_or(0).saturating_sub(60);
+    let mut start = ranges.first().map(|r| r.0).unwrap_or(0).saturating_sub(400);
     while start > 0 && !s.is_char_boundary(start) {
         start -= 1;
     }
@@ -181,9 +181,11 @@ pub struct Replacer {
     scanned: usize,
     applied: bool,
     filter: String,
-    collapsed: HashSet<usize>,
-    rev: u64,
-    rows_cache: Option<((u64, String, usize), Vec<(usize, Option<usize>)>)>,
+    /// The chosen change: (file, line among its matches).
+    cur: Option<(usize, usize)>,
+    scroll_to: bool,
+    fold_form: Option<bool>,
+    kept: Option<(PathBuf, usize)>,
     status: Option<(String, bool)>,
     problems: Vec<String>,
 }
@@ -201,9 +203,10 @@ impl Replacer {
             scanned: 0,
             applied: false,
             filter: String::new(),
-            collapsed: HashSet::new(),
-            rev: 0,
-            rows_cache: None,
+            cur: None,
+            scroll_to: false,
+            fold_form: None,
+            kept: None,
             status: None,
             problems: vec![],
         }
@@ -265,9 +268,10 @@ impl Replacer {
             }
             let _ = tx.send((out, files.len(), do_apply));
         });
+        let keep = self.cur.and_then(|(f, h)| self.results.get(f).map(|r| (r.path.clone(), h)));
         self.results.clear();
-        self.collapsed.clear();
-        self.rev += 1;
+        self.kept = keep;
+        self.cur = None;
         self.status = None;
         self.problems.clear();
         self.job = Some(Job { rx, done, total, cancel });
@@ -292,35 +296,45 @@ impl Replacer {
         }
         // After applying, the list keeps what was done; a preview shows only files with matches.
         self.results = if applied { results } else { results.into_iter().filter(|r| r.count > 0).collect() };
-        self.rev += 1;
+        // Stay on the file that was being looked at.
+        self.cur = self.kept.take().and_then(|(p, h)| self.results.iter().position(|r| r.path == p).map(|f| (f, h.min(self.results[f].hits.len().saturating_sub(1)))));
+        self.scroll_to = true;
+        if !self.results.is_empty() && !applied {
+            self.fold_form = Some(false);
+        }
+    }
+
+    /// Starts from a search done in «Buscar texto en archivos»: those files and that text.
+    pub fn prefill(&mut self, files: Vec<PathBuf>, find: String, regex: bool, case: bool, word: bool) {
+        self.src.items = files;
+        self.o.find = find;
+        self.o.regex = regex;
+        self.o.case = case;
+        self.o.word = word;
+        self.start(false);
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, events: &mut Vec<ToolEvent>, selection: &[PathBuf], cwd: &Path) {
         self.poll(events);
         let busy = self.job.is_some();
-        ui.add_enabled_ui(!busy, |ui| {
-            self.src.ui(ui, selection, cwd, tr("ARCHIVOS DE TEXTO"));
-            ui.separator();
-            egui::Grid::new("replace_fields").num_columns(2).spacing([10.0, 4.0]).show(ui, |ui| {
-                crate::ui_kit::label(ui, tr("Buscar"));
-                let r = ui.add(egui::TextEdit::singleline(&mut self.o.find).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));
-                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    self.start(false);
-                }
-                ui.end_row();
-                crate::ui_kit::label(ui, tr("Reemplazar por"));
-                ui.add(egui::TextEdit::singleline(&mut self.o.replace).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace)).on_hover_text(tr("En modo expresión regular puedes usar $1, $2… para los grupos."));
-                ui.end_row();
-            });
-            ui.horizontal_wrapped(|ui| {
-                ui.checkbox(&mut self.o.regex, tr("Expresión regular"));
-                ui.checkbox(&mut self.o.case, tr("Distinguir mayúsculas"));
-                ui.checkbox(&mut self.o.word, tr("Palabra completa"));
-                ui.checkbox(&mut self.o.backup, tr("Guardar una copia .bak del original"));
-                ui.label(tr("Tamaño máximo"));
-                ui.add(egui::DragValue::new(&mut self.max_mb).range(1..=2048).suffix(" MB"));
-            });
-        });
+        // Like the text search: the form folds away when the preview arrives.
+        let form_open = egui::CollapsingHeader::new(RichText::new(tr("DÓNDE Y QUÉ CAMBIAR")).small().strong().color(theme::p().sub))
+            .id_salt("replace_form")
+            .open(self.fold_form.take())
+            .default_open(true)
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!busy, |ui| {
+                    self.src.ui(ui, selection, cwd, tr("ARCHIVOS DE TEXTO"));
+                    ui.separator();
+                    self.fields_ui(ui, true);
+                });
+            })
+            .body_returned
+            .is_some();
+        if !form_open {
+            // Folded: the two texts stay at hand to adjust and preview again.
+            ui.add_enabled_ui(!busy, |ui| self.fields_ui(ui, false));
+        }
         ui.separator();
         let ticked = self.results.iter().filter(|r| r.on && r.count > 0).count();
         ui.horizontal(|ui| {
@@ -347,9 +361,6 @@ impl Replacer {
                 ui.label(RichText::new(s).color(if *err { theme::p().danger } else { theme::p().ok }));
             }
         });
-        if !self.results.is_empty() && !busy {
-            self.results_ui(ui, events);
-        }
         if !self.problems.is_empty() {
             ui.collapsing(trf!("⚠ {} problema(s)", self.problems.len()), |ui| {
                 for p in self.problems.iter().take(50) {
@@ -357,13 +368,87 @@ impl Replacer {
                 }
             });
         }
+        if !self.results.is_empty() && !busy {
+            self.results_ui(ui, events);
+        }
+    }
+
+    fn fields_ui(&mut self, ui: &mut egui::Ui, full: bool) {
+        egui::Grid::new(("replace_fields", full)).num_columns(2).spacing([10.0, 4.0]).show(ui, |ui| {
+            crate::ui_kit::label(ui, tr("Buscar"));
+            let r = ui.add(egui::TextEdit::singleline(&mut self.o.find).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));
+            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                self.start(false);
+            }
+            ui.end_row();
+            crate::ui_kit::label(ui, tr("Reemplazar por"));
+            let r = ui.add(egui::TextEdit::singleline(&mut self.o.replace).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace)).on_hover_text(tr("En modo expresión regular puedes usar $1, $2… para los grupos."));
+            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                self.start(false);
+            }
+            ui.end_row();
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.checkbox(&mut self.o.regex, tr("Expresión regular"));
+            ui.checkbox(&mut self.o.case, tr("Distinguir mayúsculas"));
+            ui.checkbox(&mut self.o.word, tr("Palabra completa"));
+            if full {
+                ui.checkbox(&mut self.o.backup, tr("Guardar una copia .bak del original"));
+                ui.label(tr("Tamaño máximo"));
+                ui.add(egui::DragValue::new(&mut self.max_mb).range(1..=2048).suffix(" MB"));
+            }
+        });
+    }
+
+    fn shown_files(&self) -> Vec<usize> {
+        let q = self.filter.to_lowercase();
+        (0..self.results.len()).filter(|&i| q.is_empty() || self.results[i].path.to_string_lossy().to_lowercase().contains(&q)).collect()
+    }
+
+    fn step(&mut self, files: &[usize], step: i64) {
+        let flat: Vec<(usize, usize)> = files.iter().flat_map(|&f| (0..self.results[f].hits.len()).map(move |h| (f, h))).collect();
+        if flat.is_empty() {
+            return;
+        }
+        let at = self.cur.and_then(|c| flat.iter().position(|x| *x == c));
+        let next = match at {
+            Some(i) => (i as i64 + step).rem_euclid(flat.len() as i64) as usize,
+            None if step < 0 => flat.len() - 1,
+            None => 0,
+        };
+        self.cur = Some(flat[next]);
+        self.scroll_to = true;
     }
 
     fn results_ui(&mut self, ui: &mut egui::Ui, events: &mut Vec<ToolEvent>) {
-        ui.separator();
+        let files = self.shown_files();
+        if self.cur.map(|(f, _)| !files.contains(&f)).unwrap_or(true) {
+            self.cur = files.first().map(|&f| (f, 0));
+            self.scroll_to = true;
+        }
+        let flat_len: usize = files.iter().map(|&f| self.results[f].hits.len()).sum();
+        let pos = self.cur.map(|(cf, ch)| files.iter().take_while(|&&f| f != cf).map(|&f| self.results[f].hits.len()).sum::<usize>() + ch + 1).unwrap_or(0);
+        let mut step = 0i64;
+        let applied = self.applied;
         ui.horizontal_wrapped(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text(tr("🔍 Filtrar por ruta")).desired_width(180.0));
-            if !self.applied {
+            if ui.button("⏮").on_hover_text(tr("Primera coincidencia")).clicked() {
+                self.cur = None;
+                step = 1;
+            }
+            if ui.button(tr("◀ Anterior")).on_hover_text(tr("Mayús + F3")).clicked() {
+                step = -1;
+            }
+            ui.label(RichText::new(trf!("{} de {}", pos.min(flat_len), flat_len)).strong());
+            if ui.button(tr("Siguiente ▶")).on_hover_text(tr("F3")).clicked() {
+                step = 1;
+            }
+            if ui.button("⏭").on_hover_text(tr("Última coincidencia")).clicked() {
+                self.cur = None;
+                step = -1;
+            }
+            ui.separator();
+            ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text(tr("🔍 Filtrar por ruta")).desired_width(160.0));
+            if !applied {
                 if ui.small_button(tr("Marcar todos")).clicked() {
                     self.results.iter_mut().for_each(|r| r.on = true);
                 }
@@ -371,98 +456,152 @@ impl Replacer {
                     self.results.iter_mut().for_each(|r| r.on = false);
                 }
             }
-            if ui.small_button(tr("Contraer todo")).clicked() {
-                self.collapsed = (0..self.results.len()).collect();
-                self.rev += 1;
-            }
-            if ui.small_button(tr("Expandir todo")).clicked() {
-                self.collapsed.clear();
-                self.rev += 1;
+        });
+        let typing = ui.ctx().memory(|m| m.focused().is_some());
+        ui.input_mut(|i| {
+            if i.consume_key(egui::Modifiers::SHIFT, egui::Key::F3) {
+                step = -1;
+            } else if i.consume_key(egui::Modifiers::NONE, egui::Key::F3) || (!typing && i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)) {
+                step = 1;
+            } else if !typing && i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
+                step = -1;
             }
         });
-        let key = (self.rev, self.filter.clone(), self.results.len());
-        if self.rows_cache.as_ref().map(|c| c.0 != key).unwrap_or(true) {
-            let q = self.filter.to_lowercase();
-            let mut rows = Vec::with_capacity(self.results.len() * 3);
-            for (fi, f) in self.results.iter().enumerate() {
-                if !q.is_empty() && !f.path.to_string_lossy().to_lowercase().contains(&q) {
-                    continue;
-                }
-                rows.push((fi, None));
-                if !self.collapsed.contains(&fi) {
-                    rows.extend((0..f.hits.len()).map(|h| (fi, Some(h))));
-                }
-            }
-            self.rows_cache = Some((key, rows));
+        if step != 0 {
+            self.step(&files, step);
         }
-        let (rows_key, rows) = self.rows_cache.take().unwrap_or_default();
-        let font = FontId::monospace(13.0);
         let roots = self.src.items.clone();
-        let (mut toggle, mut folder) = (None, None);
-        let applied = self.applied;
-        egui::ScrollArea::vertical().id_salt("replace_rows").max_height(crate::tools::grow(ui, 340.0)).auto_shrink([false, false]).show_rows(ui, 24.0, rows.len(), |ui, range| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            for &(fi, hi) in &rows[range] {
-                let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), egui::Sense::click());
-                let mut row = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(4.0, 0.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
-                let f = &mut self.results[fi];
-                match hi {
-                    None => {
-                        ui.painter().rect_filled(rect.shrink2(egui::vec2(0.0, 1.0)), 4.0, if resp.hovered() { theme::p().hover } else { theme::p().stripe });
-                        if !applied {
-                            row.checkbox(&mut f.on, "");
-                        }
-                        row.label(RichText::new(if self.collapsed.contains(&fi) { "▸" } else { "▾" }).color(theme::p().sub));
-                        let name = f.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                        row.label(RichText::new(format!("🗋 {name}")).strong());
-                        row.label(RichText::new(trf!("{} coincidencias", f.count)).small().color(theme::accent()));
-                        match (&f.error, f.changed, applied) {
-                            (Some(e), _, _) => {
-                                row.label(RichText::new(format!("✖ {e}")).small().color(theme::p().danger));
-                            }
-                            (_, true, true) => {
-                                row.label(RichText::new(tr("✔ modificado")).small().color(theme::p().ok));
-                            }
-                            (_, false, true) => {
-                                row.label(RichText::new(tr("sin cambios")).small().color(theme::p().muted));
-                            }
-                            _ => {}
-                        }
-                        let rel = roots.iter().find_map(|r| f.path.parent().and_then(|p| p.strip_prefix(r).ok())).map(|p| p.to_string_lossy().to_string()).filter(|p| !p.is_empty());
-                        row.add(egui::Label::new(RichText::new(rel.unwrap_or_else(|| f.path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default())).small().color(theme::p().muted)).truncate());
-                        if resp.clicked() {
-                            toggle = Some(fi);
-                        }
-                        resp.context_menu(|ui| {
-                            if ui.button(tr("Ir a la carpeta")).clicked() {
-                                folder = f.path.parent().map(Path::to_path_buf);
-                                ui.close_menu();
-                            }
-                        });
+        let mut folder = None;
+        let mut open = None;
+        let height = ui.available_height().max(320.0);
+        let (area, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::hover());
+        let mut panes = ui.new_child(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::top_down(egui::Align::Min)));
+        // Left: the files, ticked to be changed, with their count and what happened.
+        egui::SidePanel::left(egui::Id::new("replace_files")).resizable(true).default_width(300.0).width_range(180.0..=area.width() * 0.6).show_inside(&mut panes, |ui| {
+            ui.label(RichText::new(trf!("ARCHIVOS ({})", files.len())).small().strong().color(theme::p().sub));
+            let scroll_file = if self.scroll_to { self.cur.and_then(|(f, _)| files.iter().position(|&x| x == f)) } else { None };
+            let mut sa = egui::ScrollArea::both().id_salt("replace_file_list").auto_shrink([false, false]);
+            if let Some(i) = scroll_file {
+                sa = sa.vertical_scroll_offset((i as f32 * 40.0 - ui.available_height() / 2.0).max(0.0));
+            }
+            sa.show_rows(ui, 40.0, files.len(), |ui, range| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for &fi in &files[range] {
+                    let selected = self.cur.map(|(c, _)| c == fi).unwrap_or(false);
+                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width().max(260.0), 40.0), egui::Sense::click());
+                    if selected {
+                        ui.painter().rect_filled(rect, 4.0, theme::accent().gamma_multiply(0.22));
+                    } else if resp.hovered() {
+                        ui.painter().rect_filled(rect, 4.0, theme::p().hover);
                     }
-                    Some(h) => {
-                        let hit = &f.hits[h];
-                        if h % 2 == 1 {
-                            ui.painter().rect_filled(rect, 0.0, theme::p().stripe.gamma_multiply(0.5));
+                    let f = &mut self.results[fi];
+                    let mut text_left = rect.left() + 8.0;
+                    if !applied {
+                        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(rect.min + egui::vec2(4.0, 0.0), egui::vec2(24.0, rect.height()))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+                        child.checkbox(&mut f.on, "").on_hover_text(tr("Cambiar este archivo"));
+                        text_left += 24.0;
+                    }
+                    let name = f.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                    let rel = roots.iter().find_map(|r| f.path.parent().and_then(|p| p.strip_prefix(r).ok())).map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| f.path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default());
+                    let (state, color) = match (&f.error, f.changed, applied) {
+                        (Some(_), _, _) => (tr("✖ error").to_string(), theme::p().danger),
+                        (_, true, true) => (tr("✔ modificado").to_string(), theme::p().ok),
+                        (_, false, true) => (tr("sin cambios").to_string(), theme::p().muted),
+                        _ => (f.count.to_string(), theme::accent()),
+                    };
+                    let name_color = if f.on || applied { theme::p().text } else { theme::p().muted };
+                    let p = ui.painter();
+                    p.text(egui::pos2(text_left, rect.top() + 4.0), egui::Align2::LEFT_TOP, name, FontId::proportional(14.0), name_color);
+                    p.text(egui::pos2(text_left, rect.bottom() - 4.0), egui::Align2::LEFT_BOTTOM, rel, FontId::proportional(11.0), theme::p().muted);
+                    p.text(rect.right_top() + egui::vec2(-8.0, 4.0), egui::Align2::RIGHT_TOP, state, FontId::proportional(12.0), color);
+                    let hover = match &f.error {
+                        Some(e) => format!("{}\n{e}", f.path.display()),
+                        None => f.path.to_string_lossy().to_string(),
+                    };
+                    let resp = resp.on_hover_text(hover);
+                    if resp.clicked() {
+                        self.cur = Some((fi, 0));
+                        self.scroll_to = true;
+                    }
+                    if resp.double_clicked() {
+                        open = Some(f.path.clone());
+                    }
+                    resp.context_menu(|ui| {
+                        if ui.button(tr("Abrir con la aplicación predeterminada")).clicked() {
+                            open = Some(f.path.clone());
+                            ui.close_menu();
                         }
-                        let gutter = egui::Rect::from_min_size(rect.min + egui::vec2(18.0, 0.0), egui::vec2(52.0, rect.height()));
-                        ui.painter().rect_filled(gutter, 0.0, theme::p().hover.gamma_multiply(0.6));
-                        ui.painter().text(gutter.right_center() - egui::vec2(6.0, 0.0), egui::Align2::RIGHT_CENTER, hit.line.to_string(), FontId::monospace(12.0), theme::p().sub);
-                        let text_rect = egui::Rect::from_min_max(egui::pos2(gutter.right() + 8.0, rect.top()), rect.right_bottom());
-                        let mut line_ui = ui.new_child(egui::UiBuilder::new().max_rect(text_rect).layout(egui::Layout::left_to_right(egui::Align::Center)));
-                        line_ui.add(egui::Label::new(highlighted(&hit.old, &hit.ranges, font.clone(), theme::p().text, Color32::BLACK, Color32::from_rgb(255, 150, 130))).truncate());
-                        line_ui.label(RichText::new("»").color(theme::p().sub));
-                        line_ui.add(egui::Label::new(RichText::new(&hit.new).font(font.clone()).color(theme::p().ok)).truncate());
+                        if ui.button(tr("Ir a la carpeta")).clicked() {
+                            folder = f.path.parent().map(Path::to_path_buf);
+                            ui.close_menu();
+                        }
+                    });
+                }
+            });
+        });
+        // Right: each changed line as it is now (−) and as it will be (+), whole, scrolling
+        // both ways.
+        egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(egui::Margin { left: 8, ..Default::default() })).show_inside(&mut panes, |ui| {
+            let Some((fi, hi)) = self.cur else { return };
+            let path = self.results[fi].path.clone();
+            ui.add(egui::Label::new(RichText::new(path.to_string_lossy()).strong()).truncate());
+            ui.horizontal(|ui| {
+                if ui.small_button(tr("↗ Abrir")).on_hover_text(tr("Abrir con la aplicación predeterminada")).clicked() {
+                    open = Some(path.clone());
+                }
+                if ui.small_button(tr("📁 Carpeta")).on_hover_text(tr("Ir a la carpeta")).clicked() {
+                    folder = path.parent().map(Path::to_path_buf);
+                }
+                let f = &self.results[fi];
+                if f.hits.len() >= MAX_HITS_PER_FILE {
+                    ui.label(RichText::new(trf!("se muestran las primeras {} líneas de {} coincidencias", f.hits.len(), f.count)).small().color(theme::p().muted));
+                }
+            });
+            let font = FontId::monospace(13.0);
+            let row_h = 44.0;
+            let hits_len = self.results[fi].hits.len();
+            let list_h = ui.available_height();
+            let mut sa = egui::ScrollArea::both().id_salt(("replace_hits", fi)).auto_shrink([false, false]);
+            if self.scroll_to {
+                sa = sa.vertical_scroll_offset((hi as f32 * row_h - list_h / 2.0 + row_h).max(0.0)).horizontal_scroll_offset(0.0);
+            }
+            let mut pick = None;
+            sa.show_rows(ui, row_h, hits_len, |ui, range| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for h in range {
+                    let hit = &self.results[fi].hits[h];
+                    let old = ui.fonts(|f| f.layout_job(highlighted(&hit.old, &hit.ranges, font.clone(), theme::p().text, Color32::BLACK, Color32::from_rgb(255, 150, 130))));
+                    let new = ui.fonts(|f| f.layout_no_wrap(hit.new.clone(), font.clone(), theme::p().ok));
+                    let w = (old.size().x.max(new.size().x) + 90.0).max(ui.available_width());
+                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::click());
+                    if h == hi {
+                        ui.painter().rect_filled(rect, 3.0, theme::accent().gamma_multiply(0.22));
+                    } else if h % 2 == 1 {
+                        ui.painter().rect_filled(rect, 0.0, theme::p().stripe.gamma_multiply(0.5));
+                    }
+                    let gutter = egui::Rect::from_min_size(rect.min, egui::vec2(56.0, rect.height()));
+                    let p = ui.painter();
+                    p.rect_filled(gutter, 0.0, theme::p().hover.gamma_multiply(0.6));
+                    p.text(gutter.right_center() - egui::vec2(6.0, 0.0), egui::Align2::RIGHT_CENTER, hit.line.to_string(), FontId::monospace(12.0), theme::p().sub);
+                    let x = gutter.right() + 8.0;
+                    p.text(egui::pos2(x, rect.top() + 11.0), egui::Align2::LEFT_CENTER, "−", font.clone(), theme::p().danger);
+                    p.galley(egui::pos2(x + 16.0, rect.top() + 11.0 - old.size().y / 2.0), old, theme::p().text);
+                    p.text(egui::pos2(x, rect.bottom() - 11.0), egui::Align2::LEFT_CENTER, "+", font.clone(), theme::p().ok);
+                    p.galley(egui::pos2(x + 16.0, rect.bottom() - 11.0 - new.size().y / 2.0), new, theme::p().ok);
+                    if resp.clicked() {
+                        pick = Some(h);
                     }
                 }
+            });
+            if let Some(h) = pick {
+                self.cur = Some((fi, h));
             }
         });
-        self.rows_cache = Some((rows_key, rows));
-        if let Some(fi) = toggle {
-            if !self.collapsed.remove(&fi) {
-                self.collapsed.insert(fi);
+        self.scroll_to = false;
+        if let Some(p) = open {
+            if let Err(e) = fsops::open_with_system(&p) {
+                self.status = Some((trf!("No se pudo abrir «{}»: {}", p.display(), e), true));
             }
-            self.rev += 1;
         }
         if let Some(p) = folder {
             events.push(ToolEvent::Navigate(p));

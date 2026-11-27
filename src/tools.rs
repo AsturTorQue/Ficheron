@@ -151,6 +151,8 @@ pub enum ToolEvent {
     Reload,
     Clipboard(String),
     Navigate(PathBuf),
+    /// Open «Buscar y reemplazar» on these files with this text (regex, case, whole word).
+    ReplaceIn(Vec<PathBuf>, String, bool, bool, bool),
 }
 
 enum Out {
@@ -642,6 +644,13 @@ impl ToolWindow {
         }
         if let Some(x) = &mut self.emptydirs {
             x.demo(dir);
+        }
+    }
+
+    /// For «Buscar y reemplazar»: start from a text search's files and text.
+    pub fn prefill_replace(&mut self, files: Vec<PathBuf>, find: String, regex: bool, case: bool, word: bool) {
+        if let Some(x) = &mut self.replacer {
+            x.prefill(files, find, regex, case, word);
         }
     }
 
