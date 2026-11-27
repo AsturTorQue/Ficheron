@@ -9,7 +9,6 @@ use crate::theme;
 use crate::tools::ToolEvent;
 use eframe::egui::{self, text::LayoutJob, Color32, FontId, RichText, TextFormat};
 use regex::{Regex, RegexBuilder};
-use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -49,11 +48,11 @@ struct Cfg {
 
 /// Shortens a very long line around the first match, keeping the highlight positions right.
 fn clip(line: &str, ranges: &[(usize, usize)]) -> (String, Vec<(usize, usize)>) {
-    const MAX: usize = 300;
+    const MAX: usize = 2000;
     if line.len() <= MAX {
         return (line.to_string(), ranges.to_vec());
     }
-    let mut start = ranges.first().map(|r| r.0).unwrap_or(0).saturating_sub(80);
+    let mut start = ranges.first().map(|r| r.0).unwrap_or(0).saturating_sub(400);
     while start > 0 && !line.is_char_boundary(start) {
         start -= 1;
     }
@@ -218,14 +217,19 @@ pub struct Searcher {
     secs: f32,
     status: Option<(String, bool)>,
     problems: Vec<String>,
-    collapsed: HashSet<usize>,
     filter: String,
+    /// The chosen match: (file, line among its matches).
+    cur: Option<(usize, usize)>,
+    /// Scroll the lists to the chosen match on the next frame.
+    scroll_to: bool,
+    /// Lines shown before and after the chosen match.
+    context: usize,
+    file_cache: Option<(PathBuf, Vec<String>)>,
+    /// Open or fold the search form on the next frame.
+    fold_form: Option<bool>,
     last_re: Option<Regex>,
     base: PathBuf,
     sort: u8,
-    /// Bumped when results, folding or sort order change; the flattened row list is cached by it.
-    rev: u64,
-    rows_cache: Option<((u64, String, usize), Vec<(usize, Option<usize>)>)>,
 }
 
 impl Searcher {
@@ -251,13 +255,15 @@ impl Searcher {
             secs: 0.0,
             status: None,
             problems: vec![],
-            collapsed: HashSet::new(),
             filter: String::new(),
+            cur: None,
+            scroll_to: false,
+            context: 4,
+            file_cache: None,
+            fold_form: None,
             last_re: None,
             base,
             sort: 0,
-            rev: 0,
-            rows_cache: None,
         }
     }
 
@@ -302,8 +308,8 @@ impl Searcher {
             let _ = tx.send(search(&roots, &cfg, &p2, &c2));
         });
         self.results.clear();
-        self.collapsed.clear();
-        self.rev += 1;
+        self.cur = None;
+        self.file_cache = None;
         self.status = None;
         self.problems.clear();
         self.job = Some(Job { rx, progress, cancel, started: Instant::now() });
@@ -316,8 +322,10 @@ impl Searcher {
         let cancelled = job.cancel.load(Ordering::Relaxed);
         self.job = None;
         self.results = results;
-        self.rev += 1;
         self.problems = errs;
+        if !self.results.is_empty() {
+            self.fold_form = Some(false);
+        }
         self.scanned = scanned;
         self.truncated = truncated;
         if cancelled {
@@ -347,24 +355,26 @@ impl Searcher {
     pub fn ui(&mut self, ui: &mut egui::Ui, events: &mut Vec<ToolEvent>, selection: &[PathBuf], cwd: &Path) {
         self.poll();
         let busy = self.job.is_some();
-        egui::ScrollArea::vertical().id_salt("grep_all").auto_shrink([false, false]).max_height(ui.available_height() - 4.0).show(ui, |ui| {
+        // The search form folds away once there are results, to leave the room to them.
+        let header = egui::CollapsingHeader::new(RichText::new(tr("DÓNDE Y QUÉ BUSCAR")).small().strong().color(theme::p().sub)).id_salt("grep_form").open(self.fold_form.take()).default_open(true);
+        header.show(ui, |ui| {
             ui.add_enabled_ui(!busy, |ui| {
                 self.roots.ui(ui, selection, cwd, tr("CARPETAS DONDE BUSCAR"));
                 ui.separator();
                 self.query_ui(ui);
             });
-            self.action_ui(ui, events);
-            self.results_ui(ui, events);
-            if !self.problems.is_empty() {
-                ui.collapsing(trf!("⚠ {} problema(s)", self.problems.len()), |ui| {
-                    egui::ScrollArea::vertical().max_height(90.0).id_salt("grep_err").show(ui, |ui| {
-                        for p in &self.problems {
-                            ui.label(RichText::new(p).small().color(theme::p().danger));
-                        }
-                    });
-                });
-            }
         });
+        self.action_ui(ui, events);
+        if !self.problems.is_empty() {
+            ui.collapsing(trf!("⚠ {} problema(s)", self.problems.len()), |ui| {
+                egui::ScrollArea::vertical().max_height(90.0).id_salt("grep_err").show(ui, |ui| {
+                    for p in &self.problems {
+                        ui.label(RichText::new(p).small().color(theme::p().danger));
+                    }
+                });
+            });
+        }
+        self.results_ui(ui, events);
     }
 
     fn query_ui(&mut self, ui: &mut egui::Ui) {
@@ -434,6 +444,39 @@ impl Searcher {
         });
     }
 
+    /// Files that pass the path filter, in the current order.
+    fn shown_files(&self) -> Vec<usize> {
+        let q = self.filter.to_lowercase();
+        (0..self.results.len()).filter(|&i| q.is_empty() || self.results[i].path.to_string_lossy().to_lowercase().contains(&q)).collect()
+    }
+
+    /// Moves the current match by `step` (±1) across the shown files, wrapping around.
+    fn step(&mut self, files: &[usize], step: i64) {
+        let flat: Vec<(usize, usize)> = files.iter().flat_map(|&f| (0..self.results[f].hits.len()).map(move |h| (f, h))).collect();
+        if flat.is_empty() {
+            return;
+        }
+        let at = self.cur.and_then(|c| flat.iter().position(|x| *x == c));
+        let next = match at {
+            Some(i) => (i as i64 + step).rem_euclid(flat.len() as i64) as usize,
+            None if step < 0 => flat.len() - 1,
+            None => 0,
+        };
+        self.cur = Some(flat[next]);
+        self.scroll_to = true;
+    }
+
+    /// The file's lines, read once when it becomes current, for the context view.
+    fn file_lines(&mut self, path: &Path) -> &[String] {
+        if self.file_cache.as_ref().map(|(p, _)| p != path).unwrap_or(true) {
+            let mut bytes = vec![];
+            let _ = fs::File::open(path).and_then(|f| f.take(self.max_mb as u64 * 1024 * 1024).read_to_end(&mut bytes));
+            let lines = String::from_utf8_lossy(&bytes).lines().map(|l| l.chars().take(4000).collect()).collect();
+            self.file_cache = Some((path.to_path_buf(), lines));
+        }
+        &self.file_cache.as_ref().unwrap().1
+    }
+
     fn results_ui(&mut self, ui: &mut egui::Ui, events: &mut Vec<ToolEvent>) {
         if self.job.is_some() {
             return;
@@ -450,16 +493,33 @@ impl Searcher {
         if self.truncated {
             ui.label(RichText::new(tr("Hay demasiadas coincidencias: la búsqueda se detuvo en las primeras. Afina el texto o los filtros.")).small().color(theme::p().danger));
         }
+        let files = self.shown_files();
+        if self.cur.map(|(f, _)| !files.contains(&f)).unwrap_or(true) {
+            self.cur = files.first().map(|&f| (f, 0));
+            self.scroll_to = true;
+        }
+        // Navigation bar: previous / next match across every file (F3 and Shift+F3 too).
+        let flat_len: usize = files.iter().map(|&f| self.results[f].hits.len()).sum();
+        let pos = self.cur.map(|(cf, ch)| files.iter().take_while(|&&f| f != cf).map(|&f| self.results[f].hits.len()).sum::<usize>() + ch + 1).unwrap_or(0);
+        let mut step = 0i64;
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text(tr("🔍 Filtrar por ruta")).desired_width(180.0));
-            if ui.small_button(tr("Contraer todo")).clicked() {
-                self.collapsed = (0..self.results.len()).collect();
-                self.rev += 1;
+            if ui.button(tr("⏮")).on_hover_text(tr("Primera coincidencia")).clicked() {
+                self.cur = None;
+                step = 1;
             }
-            if ui.small_button(tr("Expandir todo")).clicked() {
-                self.collapsed.clear();
-                self.rev += 1;
+            if ui.button(tr("◀ Anterior")).on_hover_text(tr("Mayús + F3")).clicked() {
+                step = -1;
             }
+            ui.label(RichText::new(trf!("{} de {}", pos, flat_len)).strong());
+            if ui.button(tr("Siguiente ▶")).on_hover_text(tr("F3")).clicked() {
+                step = 1;
+            }
+            if ui.button(tr("⏭")).on_hover_text(tr("Última coincidencia")).clicked() {
+                self.cur = None;
+                step = -1;
+            }
+            ui.separator();
+            ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text(tr("🔍 Filtrar por ruta")).desired_width(160.0));
             let before = self.sort;
             egui::ComboBox::from_id_salt("grep_sort").selected_text(tr(["Ordenar por ruta", "Más coincidencias primero", "Por nombre"][self.sort as usize])).show_ui(ui, |ui| {
                 for (k, l) in ["Ordenar por ruta", "Más coincidencias primero", "Por nombre"].iter().enumerate() {
@@ -467,91 +527,183 @@ impl Searcher {
                 }
             });
             if before != self.sort {
+                let cur = self.cur.map(|(f, h)| (self.results[f].path.clone(), h));
                 match self.sort {
                     1 => self.results.sort_by(|a, b| b.count.cmp(&a.count).then(a.path.cmp(&b.path))),
                     2 => self.results.sort_by(|a, b| a.path.file_name().map(|n| n.to_ascii_lowercase()).cmp(&b.path.file_name().map(|n| n.to_ascii_lowercase()))),
                     _ => self.results.sort_by(|a, b| a.path.cmp(&b.path)),
                 }
-                self.collapsed.clear();
-                self.rev += 1;
+                self.cur = cur.and_then(|(p, h)| self.results.iter().position(|f| f.path == p).map(|f| (f, h)));
+                self.scroll_to = true;
+            }
+            ui.label(RichText::new(tr("Contexto")).small().color(theme::p().sub));
+            ui.add(egui::DragValue::new(&mut self.context).range(0..=50).suffix(tr(" líneas"))).on_hover_text(tr("Líneas que se ven antes y después de la coincidencia elegida"));
+        });
+        let typing = ui.ctx().memory(|m| m.focused().is_some());
+        ui.input_mut(|i| {
+            if i.consume_key(egui::Modifiers::SHIFT, egui::Key::F3) {
+                step = -1;
+            } else if i.consume_key(egui::Modifiers::NONE, egui::Key::F3) || (!typing && i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)) {
+                step = 1;
+            } else if !typing && i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
+                step = -1;
             }
         });
-        let key = (self.rev, self.filter.clone(), self.results.len());
-        if self.rows_cache.as_ref().map(|c| c.0 != key).unwrap_or(true) {
-            let q = self.filter.to_lowercase();
-            let mut rows: Vec<(usize, Option<usize>)> = Vec::with_capacity(self.results.len() * 4);
-            for (fi, f) in self.results.iter().enumerate() {
-                if !q.is_empty() && !f.path.to_string_lossy().to_lowercase().contains(&q) {
-                    continue;
-                }
-                rows.push((fi, None));
-                if !self.collapsed.contains(&fi) {
-                    rows.extend((0..f.hits.len()).map(|h| (fi, Some(h))));
-                }
-            }
-            self.rows_cache = Some((key, rows));
+        if step != 0 {
+            self.step(&files, step);
         }
-        let (rows_key, rows) = self.rows_cache.take().unwrap_or_default();
-        let font = FontId::monospace(13.0);
-        let (mut toggle, mut open, mut folder, mut copy) = (None, None, None, None);
+        let files = self.shown_files();
+        let mut open = None;
+        let mut folder = None;
+        let mut copy = None;
         let roots = self.roots.roots.clone();
-        egui::ScrollArea::vertical().id_salt("grep_rows").max_height(crate::tools::grow(ui, 340.0)).auto_shrink([false, false]).show_rows(ui, 24.0, rows.len(), |ui, range| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            for &(fi, hi) in &rows[range] {
-                let f = &self.results[fi];
-                let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), egui::Sense::click());
-                let mut row = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(4.0, 0.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
-                match hi {
-                    None => {
-                        ui.painter().rect_filled(rect.shrink2(egui::vec2(0.0, 1.0)), 4.0, if resp.hovered() { theme::p().hover } else { theme::p().stripe });
-                        let folded = self.collapsed.contains(&fi);
-                        row.label(RichText::new(if folded { "▸" } else { "▾" }).color(theme::p().sub));
-                        let name = f.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                        row.label(RichText::new(format!("🗋 {name}")).strong());
-                        row.label(RichText::new(trf!("{} coincidencias", f.count)).small().color(theme::accent()));
-                        let rel = roots.iter().find_map(|r| f.path.parent().and_then(|p| p.strip_prefix(r).ok())).map(|p| p.to_string_lossy().to_string()).filter(|p| !p.is_empty());
-                        row.add(egui::Label::new(RichText::new(rel.unwrap_or_else(|| f.path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default())).small().color(theme::p().muted)).truncate());
-                        row.with_layout(egui::Layout::right_to_left(egui::Align::Center), |row| {
-                            if row.small_button("📋").on_hover_text(tr("Copiar ruta")).clicked() {
-                                copy = Some(f.path.to_string_lossy().to_string());
-                            }
-                            if row.small_button("📁").on_hover_text(tr("Ir a la carpeta")).clicked() {
-                                folder = f.path.parent().map(Path::to_path_buf);
-                            }
-                            if row.small_button("↗").on_hover_text(tr("Abrir con la aplicación predeterminada")).clicked() {
-                                open = Some(f.path.clone());
-                            }
-                        });
-                        if resp.clicked() {
-                            toggle = Some(fi);
-                        }
+        let height = ui.available_height().max(320.0);
+        let (area, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::hover());
+        let mut panes = ui.new_child(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::top_down(egui::Align::Min)));
+        // Left: the files, with how many matches each has.
+        egui::SidePanel::left(egui::Id::new("grep_files")).resizable(true).default_width(280.0).width_range(160.0..=area.width() * 0.6).show_inside(&mut panes, |ui| {
+            ui.label(RichText::new(trf!("ARCHIVOS ({})", files.len())).small().strong().color(theme::p().sub));
+            let scroll_file = if self.scroll_to { self.cur.and_then(|(f, _)| files.iter().position(|&x| x == f)) } else { None };
+            let mut sa = egui::ScrollArea::both().id_salt("grep_file_list").auto_shrink([false, false]);
+            if let Some(i) = scroll_file {
+                sa = sa.vertical_scroll_offset((i as f32 * 40.0 - ui.available_height() / 2.0).max(0.0));
+            }
+            sa.show_rows(ui, 40.0, files.len(), |ui, range| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for &fi in &files[range] {
+                    let f = &self.results[fi];
+                    let selected = self.cur.map(|(c, _)| c == fi).unwrap_or(false);
+                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width().max(240.0), 40.0), egui::Sense::click());
+                    if selected {
+                        ui.painter().rect_filled(rect, 4.0, theme::accent().gamma_multiply(0.22));
+                    } else if resp.hovered() {
+                        ui.painter().rect_filled(rect, 4.0, theme::p().hover);
                     }
-                    Some(h) => {
-                        let hit = &f.hits[h];
-                        if h % 2 == 1 {
-                            ui.painter().rect_filled(rect, 0.0, theme::p().stripe.gamma_multiply(0.5));
-                        }
-                        let gutter = egui::Rect::from_min_size(rect.min + egui::vec2(18.0, 0.0), egui::vec2(52.0, rect.height()));
-                        ui.painter().rect_filled(gutter, 0.0, theme::p().hover.gamma_multiply(0.6));
-                        ui.painter().text(gutter.right_center() - egui::vec2(6.0, 0.0), egui::Align2::RIGHT_CENTER, hit.line.to_string(), FontId::monospace(12.0), theme::p().sub);
-                        let text_rect = egui::Rect::from_min_max(egui::pos2(gutter.right() + 8.0, rect.top()), rect.right_bottom());
-                        let mut line_ui = ui.new_child(egui::UiBuilder::new().max_rect(text_rect).layout(egui::Layout::left_to_right(egui::Align::Center)));
-                        line_ui.add(egui::Label::new(highlighted(&hit.text, &hit.ranges, font.clone(), theme::p().text, Color32::BLACK, Color32::from_rgb(255, 214, 90))).truncate());
-                        if resp.double_clicked() {
+                    let name = f.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                    let rel = roots.iter().find_map(|r| f.path.parent().and_then(|p| p.strip_prefix(r).ok())).map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| f.path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default());
+                    let p = ui.painter();
+                    p.text(rect.left_top() + egui::vec2(8.0, 4.0), egui::Align2::LEFT_TOP, name, FontId::proportional(14.0), theme::p().text);
+                    p.text(rect.left_bottom() + egui::vec2(8.0, -4.0), egui::Align2::LEFT_BOTTOM, rel, FontId::proportional(11.0), theme::p().muted);
+                    p.text(rect.right_top() + egui::vec2(-8.0, 4.0), egui::Align2::RIGHT_TOP, f.count.to_string(), FontId::proportional(12.0), theme::accent());
+                    let resp = resp.on_hover_text(f.path.to_string_lossy());
+                    if resp.clicked() {
+                        self.cur = Some((fi, 0));
+                        self.scroll_to = true;
+                    }
+                    if resp.double_clicked() {
+                        open = Some(f.path.clone());
+                    }
+                    resp.context_menu(|ui| {
+                        if ui.button(tr("Abrir con la aplicación predeterminada")).clicked() {
                             open = Some(f.path.clone());
+                            ui.close_menu();
                         }
-                        resp.on_hover_text(tr("Doble clic: abrir el archivo"));
+                        if ui.button(tr("Ir a la carpeta")).clicked() {
+                            folder = f.path.parent().map(Path::to_path_buf);
+                            ui.close_menu();
+                        }
+                        if ui.button(tr("Copiar ruta")).clicked() {
+                            copy = Some(f.path.to_string_lossy().to_string());
+                            ui.close_menu();
+                        }
+                    });
+                }
+            });
+        });
+        // Right: the matches of the current file (scroll both ways, nothing cut) and the
+        // lines around the chosen one.
+        egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(egui::Margin { left: 8, ..Default::default() })).show_inside(&mut panes, |ui| {
+            let Some((fi, hi)) = self.cur else { return };
+            let path = self.results[fi].path.clone();
+            ui.horizontal(|ui| {
+                ui.add(egui::Label::new(RichText::new(path.to_string_lossy()).strong()).truncate());
+            });
+            ui.horizontal(|ui| {
+                if ui.small_button(tr("↗ Abrir")).on_hover_text(tr("Abrir con la aplicación predeterminada")).clicked() {
+                    open = Some(path.clone());
+                }
+                if ui.small_button(tr("📁 Carpeta")).on_hover_text(tr("Ir a la carpeta")).clicked() {
+                    folder = path.parent().map(Path::to_path_buf);
+                }
+                if ui.small_button(tr("📋 Ruta")).on_hover_text(tr("Copiar ruta")).clicked() {
+                    copy = Some(path.to_string_lossy().to_string());
+                }
+                if ui.small_button(tr("📋 Línea")).on_hover_text(tr("Copiar la línea elegida")).clicked() {
+                    copy = self.results[fi].hits.get(hi).map(|h| h.text.clone());
+                }
+                let f = &self.results[fi];
+                if f.count > f.hits.len() {
+                    ui.label(RichText::new(trf!("se muestran {} de {} coincidencias", f.hits.len(), f.count)).small().color(theme::p().muted));
+                }
+            });
+            let ctx_lines = self.context;
+            let ctx_h = if ctx_lines == 0 { 0.0 } else { (ctx_lines as f32 * 2.0 + 1.0) * 18.0 + 34.0 };
+            let list_h = (ui.available_height() - ctx_h).max(120.0);
+            let font = FontId::monospace(13.0);
+            let row_h = 22.0;
+            let hits_len = self.results[fi].hits.len();
+            let mut sa = egui::ScrollArea::both().id_salt(("grep_hits", fi)).max_height(list_h).auto_shrink([false, false]);
+            if self.scroll_to {
+                sa = sa.vertical_scroll_offset((hi as f32 * row_h - list_h / 2.0 + row_h).max(0.0)).horizontal_scroll_offset(0.0);
+            }
+            let mut pick = None;
+            sa.show_rows(ui, row_h, hits_len, |ui, range| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for h in range {
+                    let hit = &self.results[fi].hits[h];
+                    let job = highlighted(&hit.text, &hit.ranges, font.clone(), theme::p().text, Color32::BLACK, Color32::from_rgb(255, 214, 90));
+                    let galley = ui.fonts(|f| f.layout_job(job));
+                    let w = (galley.size().x + 70.0).max(ui.available_width());
+                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::click());
+                    if h == hi {
+                        ui.painter().rect_filled(rect, 3.0, theme::accent().gamma_multiply(0.22));
+                    } else if h % 2 == 1 {
+                        ui.painter().rect_filled(rect, 0.0, theme::p().stripe.gamma_multiply(0.5));
+                    }
+                    let gutter = egui::Rect::from_min_size(rect.min, egui::vec2(56.0, rect.height()));
+                    ui.painter().rect_filled(gutter, 0.0, theme::p().hover.gamma_multiply(0.6));
+                    ui.painter().text(gutter.right_center() - egui::vec2(6.0, 0.0), egui::Align2::RIGHT_CENTER, hit.line.to_string(), FontId::monospace(12.0), theme::p().sub);
+                    ui.painter().galley(egui::pos2(gutter.right() + 8.0, rect.center().y - galley.size().y / 2.0), galley, theme::p().text);
+                    if resp.clicked() {
+                        pick = Some(h);
+                    }
+                    if resp.double_clicked() {
+                        open = Some(self.results[fi].path.clone());
                     }
                 }
+            });
+            if let Some(h) = pick {
+                self.cur = Some((fi, h));
+            }
+            if ctx_lines > 0 {
+                let Some((fi, hi)) = self.cur else { return };
+                let line_no = self.results[fi].hits.get(hi).map(|h| h.line).unwrap_or(1);
+                ui.separator();
+                ui.label(RichText::new(trf!("CONTEXTO · línea {}", line_no)).small().strong().color(theme::p().sub));
+                let re = self.last_re.clone();
+                let lines: Vec<(usize, String)> = {
+                    let all = self.file_lines(&path);
+                    let from = line_no.saturating_sub(ctx_lines + 1);
+                    let to = (line_no + ctx_lines).min(all.len());
+                    (from..to).map(|i| (i + 1, all[i].clone())).collect()
+                };
+                egui::Frame::new().fill(theme::p().stripe).corner_radius(4.0).inner_margin(4.0).show(ui, |ui| {
+                    egui::ScrollArea::both().id_salt("grep_context").auto_shrink([false, false]).show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        for (n, text) in lines {
+                            let ranges: Vec<(usize, usize)> = if n == line_no { re.as_ref().map(|r| r.find_iter(&text).map(|m| (m.start(), m.end())).collect()).unwrap_or_default() } else { vec![] };
+                            let color = if n == line_no { theme::p().text } else { theme::p().sub };
+                            let job = highlighted(&text, &ranges, FontId::monospace(13.0), color, Color32::BLACK, Color32::from_rgb(255, 214, 90));
+                            ui.horizontal(|ui| {
+                                ui.add_sized([48.0, 18.0], egui::Label::new(RichText::new(n.to_string()).monospace().small().color(if n == line_no { theme::accent() } else { theme::p().muted })));
+                                ui.add(egui::Label::new(job).extend());
+                            });
+                        }
+                    });
+                });
             }
         });
-        self.rows_cache = Some((rows_key, rows));
-        if let Some(fi) = toggle {
-            if !self.collapsed.remove(&fi) {
-                self.collapsed.insert(fi);
-            }
-            self.rev += 1;
-        }
+        self.scroll_to = false;
         if let Some(p) = open {
             if let Err(e) = fsops::open_with_system(&p) {
                 self.status = Some((trf!("No se pudo abrir «{}»: {}", p.display(), e), true));
@@ -628,10 +780,10 @@ mod tests {
 
     #[test]
     fn long_lines_are_clipped_around_the_match() {
-        let line = format!("{}OBJETIVO{}", "ñ".repeat(400), "é".repeat(400));
+        let line = format!("{}OBJETIVO{}", "ñ".repeat(2000), "é".repeat(2000));
         let start = line.find("OBJETIVO").unwrap();
         let (t, r) = clip(&line, &[(start, start + 8)]);
-        assert!(t.len() < 330 && t.starts_with('…') && t.ends_with('…'));
+        assert!(t.len() < 2100 && t.starts_with('…') && t.ends_with('…'));
         assert_eq!(&t[r[0].0..r[0].1], "OBJETIVO");
         let (t, r) = clip("corta", &[(0, 3)]);
         assert_eq!((t.as_str(), r), ("corta", vec![(0, 3)]));
